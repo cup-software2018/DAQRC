@@ -144,7 +144,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         run_number = self.RunNumber
         config_file = self.ConfigFile
 
-        version = onlconsts.kSOFTWARE_VER
         onldaq_dir = onlconsts.kONLDAQ_DIR
         rawdata_dir = onlconsts.kRAWDATA_DIR
 
@@ -199,7 +198,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         optlist.sort(key=sortfunc)
         optlist.append(optlist.pop(0))
 
-        versionopt = '--version=%s ' % version
         onldaqdiropt = '--onldaqdir=%s ' % onldaq_dir
         rawdatadiropt = '--rawdatadir=%s ' % rawdata_dir
 
@@ -208,7 +206,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             mode = daq[0]
             daq_ip = daq[3]
             shell_option = daq[1]
-            shell_option += versionopt
             shell_option += onldaqdiropt
             shell_option += rawdatadiropt
             daq_option = daq[2]
@@ -223,7 +220,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         tcb_ip = tcb[3]
         tcb_port = tcb[4]
         shell_option = tcb[1]
-        shell_option += versionopt
         shell_option += onldaqdiropt
         shell_option += rawdatadiropt
         tcb_option = tcb[2]
