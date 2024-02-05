@@ -21,7 +21,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.setupUi(self)
 
         # DAQ software
-        self.Bindir = onlconsts.kONLDAQ_DIR + '/scripts/'
+        self.Bindir = onlconsts.kONLDAQ_DIR + '/bin/'
 
         # Run configuration variables
         self.RunNumber = 0
