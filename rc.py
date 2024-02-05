@@ -21,9 +21,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.setupUi(self)
 
         # DAQ software
-        #BFARCH = os.getenv('BFARCH')
-        BFARCH = 'Linux5.14-GCC_11_4'
-        self.Bindir = onlconsts.kONLDAQ_DIR + '/bin/' + BFARCH + '/'
+        self.Bindir = onlconsts.kONLDAQ_DIR + '/scripts/'
 
         # Run configuration variables
         self.RunNumber = 0
