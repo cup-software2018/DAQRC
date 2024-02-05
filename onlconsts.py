@@ -1,15 +1,13 @@
-kSOFTWARE_VER = '3.1.2'
-kONLDAQ_DIR = '/amore2/onldaq/dev_3.2.0'
-kRAWDATA_DIR = '/amore2/amore2test'
-kRUNCATALOGDBFILE = '/amore2/amore2test/runcatalog.db'
-kDEFAULTCONFIGDIR = '/amore2/onldaq/config'
+kONLDAQ_DIR =
+kRAWDATA_DIR =
+kRUNCATALOGDBFILE =
+kDEFAULTCONFIGDIR =
 
-kRUNTYPELIST = ['', 'physics', 'muon', 'calibration', 'test', 'pedestal']
+kRUNTYPELIST = ['', 'physics', 'calibration', 'test']
 
-kDAQSERVER_IP = '172.16.2.50'
+kDAQSERVER_IP = 'localhost'
 kDAQSERVER_PORT = 7809
 kDAQSERVER_ADDR = (kDAQSERVER_IP, kDAQSERVER_PORT)
-
 
 #
 # Do not modify from here!!!
