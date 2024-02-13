@@ -1,3 +1,5 @@
 /.lh/
 /.vscode/
 /*.config
+/onlconsts.py
+/__pycache__

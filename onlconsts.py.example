@@ -1,12 +1,18 @@
-kONLDAQ_DIR =
-kRAWDATA_DIR =
-kRUNCATALOGDBFILE =
-kDEFAULTCONFIGDIR =
+kONLDAQ_DIR = ''
+kRAWDATA_DIR = ''
+kRUNCATALOGDBFILE = ''
+kDEFAULTCONFIGDIR = ''
 
+#
+# Add more run type
+#
 kRUNTYPELIST = ['', 'physics', 'calibration', 'test']
 
-kDAQSERVER_IP = 'localhost'
-kDAQSERVER_PORT = 7809
+#
+# DAQ Server where tcb is supposed to be runnig
+#
+kDAQSERVER_IP = ''
+kDAQSERVER_PORT =
 kDAQSERVER_ADDR = (kDAQSERVER_IP, kDAQSERVER_PORT)
 
 #
