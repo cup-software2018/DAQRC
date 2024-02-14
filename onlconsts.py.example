@@ -1,5 +1,18 @@
+#
+# DAQ Server where tcb is supposed to be runnig
+#
+kDAQSERVER_IP = ''
+kDAQSERVER_PORT =
+kDAQSERVER_ADDR = (kDAQSERVER_IP, kDAQSERVER_PORT)
+
+# if RC is running on same server with DAQ
+kISREMOTEDAQ = False
+
+# kONLDAQ_DIR and kRAWDATA_DIR at DAQ server
 kONLDAQ_DIR = ''
 kRAWDATA_DIR = ''
+
+# run catalog db file should be in same server with RC
 kRUNCATALOGDBFILE = ''
 kDEFAULTCONFIGDIR = ''
 
@@ -8,13 +21,7 @@ kDEFAULTCONFIGDIR = ''
 #
 kRUNTYPELIST = ['', 'physics', 'calibration', 'test']
 
-#
-# DAQ Server where tcb is supposed to be runnig
-#
-kDAQSERVER_IP = ''
-kDAQSERVER_PORT =
-kDAQSERVER_ADDR = (kDAQSERVER_IP, kDAQSERVER_PORT)
-
+# ===========================================================
 #
 # Do not modify from here!!!
 #
