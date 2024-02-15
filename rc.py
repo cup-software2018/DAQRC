@@ -151,7 +151,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         config = '%s/CONFIG/%06d.config' % (rawdata_dir, run_number)
         cmd = 'scp %s %s:%s' % (config_file, onlconsts.kDAQSERVER_IP, config)
         os.system(cmd)
-                
+
         daqlist = []
         fp = open(config_file)
         for line in fp:
@@ -227,7 +227,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         cmd = self.Bindir + '%s %s -o "%s"' % (onlconsts.kEXESCRIPT,
                                                shell_option, tcb_option)
         result = onlutils.execute_cmd(cmd, tcb_ip)
-        
+
         self.OnThisRC = True
         self.StartTime = 0
         self.EndTime = 0
@@ -398,7 +398,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         if self.IsMonSet:
             daqtime = onlutils.HMSFormatter(
                 self.RunStats[self.MonList[0][0]]['t'])
-        
+
         daqstate = onlutils.get_state(self.RunState)
         if onlutils.check_error(self.RunState):
             daqstate = onlconsts.kERROR
