@@ -1,9 +1,7 @@
-#!/usr/bin/env python3
-
 import sys
 import os
 import getopt
-from pydblite.sqlite import Database, Table
+import sqlite3
 
 
 def help(name):
@@ -16,7 +14,6 @@ def help(name):
     mess += '    -s         add SADCDAQ\n'
     mess += '    -i         add IADCDAQ\n'
     mess += '    -o FILE    database file\n'
-
     print(mess)
 
 
@@ -33,10 +30,9 @@ def main():
 
     dbfile = 'runcatalog.db'
 
-    DAQS = ["naadc", "nfadc", "nsadc", "niadc"]
-    enabled = {}
-    for daqname in DAQS:
-        enabled[daqname] = False
+    # Initialize DAQ flags
+    DAQS = ["namoreadc", "nfadc", "nsadc", "niadc"]
+    enabled = {daq: False for daq in DAQS}
 
     for opt, arg in opts:
         if opt == '-a':
@@ -46,7 +42,7 @@ def main():
         elif opt == '-s':
             enabled["nsadc"] = True
         elif opt == '-i':
-            enabled["niadc"] = True            
+            enabled["niadc"] = True
         elif opt == '-o':
             dbfile = arg
 
@@ -54,28 +50,50 @@ def main():
         print('%s already existed, exit ...' % dbfile)
         sys.exit(1)
 
-    db = Database(dbfile)
-    table = Table('runcatalog', db)
+    # 1. Build the base SQL CREATE TABLE query string
+    create_query = """
+    CREATE TABLE runcatalog (
+        runnum INTEGER PRIMARY KEY AUTOINCREMENT,
+        runtype TEXT,
+        rundesc TEXT,
+        shift TEXT,
+        config TEXT,
+        stime TEXT,
+        etime TEXT,
+        onlbit INTEGER,
+        offbit INTEGER,
+        runlog TEXT
+    """
 
-    table.create(('runnum', 'INTEGER PRIMARY KEY AUTOINCREMENT'),
-                 ('runtype', 'TEXT'),
-                 ('rundesc', 'TEXT'),
-                 ('shift', 'TEXT'),
-                 ('config', 'TEXT'),
-                 ('stime', 'TEXT'),
-                 ('etime', 'TEXT'),
-                 ('onlbit', 'INTEGER'),
-                 ('offbit', 'INTEGER'),
-                 ('runlog', 'TEXT'))
-
+    # 2. Append dynamic columns based on enabled DAQs
     for daqname in DAQS:
         if enabled[daqname]:
-            table.add_field(daqname, 'INTEGER')
+            create_query += f",\n        {daqname} INTEGER"
             tname = daqname.replace('n', 't')
-            table.add_field(tname, 'REAL')
+            create_query += f",\n        {tname} REAL"
 
-    for item in table.info():
-        print(item)
+    # Close the query string
+    create_query += "\n    );"
+
+    # 3. Connect to SQLite and execute the query
+    # This automatically creates the file if it doesn't exist
+    conn = sqlite3.connect(dbfile)
+    cursor = conn.cursor()
+
+    cursor.execute(create_query)
+    conn.commit()
+
+    # 4. Print table info to verify the schema
+    print("Database initialized. Columns in 'runcatalog':")
+    cursor.execute("PRAGMA table_info(runcatalog);")
+    columns = cursor.fetchall()
+
+    for col in columns:
+        # col[1] is column name, col[2] is data type
+        print(f"  - {col[1]} ({col[2]})")
+
+    # Close connection
+    conn.close()
 
 
 if __name__ == '__main__':

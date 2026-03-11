@@ -2,11 +2,11 @@ import os
 import sys
 import time
 import socket
+import sqlite3
 from datetime import datetime
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 from PyQt5.QtWidgets import *
-from pydblite.sqlite import Database, Table
 from rcui import Ui_MainWindow
 import onlconsts
 import onlutils
@@ -53,8 +53,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             msg = 'No run catalog DB file!\n(%s)' % onlconsts.kRUNCATALOGDBFILE
             self.msgbox_error(msg)
             exit()
-        self.RunCatalog = Database(onlconsts.kRUNCATALOGDBFILE)
-        self.RunCatalogTable = Table('runcatalog', self.RunCatalog)
 
         #
         # Setup UI
@@ -135,12 +133,23 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         if reply.clickedButton() is reply.button(QMessageBox.No):
             return
 
-        # get run number from run catalog
-        self.RunNumber = self.RunCatalogTable.insert(shift=self.Shift,
-                                                     runtype=self.RunType,
-                                                     rundesc=self.RunDesc,
-                                                     config=self.ConfigFile)
-        self.RunCatalogTable.commit()
+        try:
+            conn = sqlite3.connect(onlconsts.kRUNCATALOGDBFILE)
+            cursor = conn.cursor()
+
+            insert_query = """
+                INSERT INTO runcatalog (shift, runtype, rundesc, config)
+                VALUES (?, ?, ?, ?)
+            """
+            cursor.execute(insert_query, (self.Shift,
+                           self.RunType, self.RunDesc, self.ConfigFile))
+
+            self.RunNumber = cursor.lastrowid
+            conn.commit()
+            conn.close()
+        except sqlite3.Error as e:
+            self.msgbox_error('Database Error: %s' % e)
+            return
 
         run_number = self.RunNumber
         config_file = self.ConfigFile
@@ -267,21 +276,37 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         mess = []
 
         if not self.OnThisRC and self.RunState is not onlconsts.kDOWN:
-            self.RunNumber = self.RunCatalogTable.__len__()
-            record = self.RunCatalogTable[self.RunNumber]
-            self.Shift = record['shift']
-            self.RunType = record['runtype']
-            self.RunDesc = record['rundesc']
-            self.ConfigFile = record['config']
-            self.ShiftConfig.setText(self.Shift)
-            index = self.RunTypeConfig.findText(
-                self.RunType, Qt.MatchFixedString)
-            self.RunTypeConfig.setCurrentIndex(index)
-            self.RunDescConfig.setText(self.RunDesc)
-            configfile = os.path.basename(self.ConfigFile)
-            msg = '<font color="blue"><b>%s</b></font> loaded' % configfile
-            self.ConfigFileLabel.setText(msg)
-            self.OnThisRC = True
+            try:
+                conn = sqlite3.connect(onlconsts.kRUNCATALOGDBFILE)
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+
+                # Retrieve the most recent run based on runnum
+                cursor.execute(
+                    "SELECT * FROM runcatalog ORDER BY runnum DESC LIMIT 1")
+                record = cursor.fetchone()
+
+                if record:
+                    self.RunNumber = record['runnum']
+                    self.Shift = record['shift']
+                    self.RunType = record['runtype']
+                    self.RunDesc = record['rundesc']
+                    self.ConfigFile = record['config']
+
+                    self.ShiftConfig.setText(self.Shift)
+                    index = self.RunTypeConfig.findText(
+                        self.RunType, Qt.MatchFixedString)
+                    self.RunTypeConfig.setCurrentIndex(index)
+                    self.RunDescConfig.setText(self.RunDesc)
+
+                    configfile = os.path.basename(self.ConfigFile)
+                    msg = '<font color="blue"><b>%s</b></font> loaded' % configfile
+                    self.ConfigFileLabel.setText(msg)
+                    self.OnThisRC = True
+
+                conn.close()
+            except sqlite3.Error:
+                pass  # Ignore errors during periodic update
 
         if not self.IsMonSet and self.RunState is not onlconsts.kDOWN:
             self.MonList.clear()
@@ -333,57 +358,69 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 self.RunStats[name]['dn'] = n
 
         if onlutils.check_state(self.RunState, onlconsts.kRUNENDED):
-            record = self.RunCatalogTable[self.RunNumber]
-            etime = record['etime']
-            if not etime:
-                onlutils.send_command(self.RunSocket, onlconsts.kQUERYRUNINFO)
-                onlutils.recv_message(self.RunSocket, mess)
-                self.EndTime = mess[3]
+            conn = sqlite3.connect(onlconsts.kRUNCATALOGDBFILE)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
 
-                for daq in self.MonList:
-                    name = daq[0]
-                    socket = daq[1]
-                    onlutils.send_command(socket, onlconsts.kQUERYTRGINFO)
-                    onlutils.recv_message(socket, mess)
-                    self.RunStats[name]['n'] = mess[0]
-                    self.RunStats[name]['t'] = mess[1]/1000000000.
+            cursor.execute(
+                "SELECT etime FROM runcatalog WHERE runnum = ?", (self.RunNumber,))
+            record = cursor.fetchone()
 
-                onlbit = 0
-                msg = 'Tag run %06d as GOODRUN?' % self.RunNumber
-                reply = self.msgbox_question(msg)
-                if reply.clickedButton() is reply.button(QMessageBox.Yes):
-                    onlbit = 1
+            if record:
+                etime = record['etime']
+                if not etime:
+                    onlutils.send_command(
+                        self.RunSocket, onlconsts.kQUERYRUNINFO)
+                    onlutils.recv_message(self.RunSocket, mess)
+                    self.EndTime = mess[3]
 
-                stime = datetime.fromtimestamp(
-                    self.StartTime).strftime("%Y-%m-%d %H:%M:%S")
-                etime = datetime.fromtimestamp(
-                    int(self.EndTime)).strftime("%Y-%m-%d %H:%M:%S")
+                    for daq in self.MonList:
+                        name = daq[0]
+                        socket = daq[1]
+                        onlutils.send_command(socket, onlconsts.kQUERYTRGINFO)
+                        onlutils.recv_message(socket, mess)
+                        self.RunStats[name]['n'] = mess[0]
+                        self.RunStats[name]['t'] = mess[1]/1000000000.
 
-                self.RunCatalogTable.update(
-                    record, stime=stime, etime=etime, onlbit=onlbit)
-                for daq in self.MonList:
-                    daqname = daq[0]
-                    if 'AADC' in daqname:
-                        self.RunCatalogTable.update(
-                            record, naadc=self.RunStats[daqname]['n'])
-                        self.RunCatalogTable.update(
-                            record, taadc=self.RunStats[daqname]['t'])
-                    elif 'FADC' in daqname:
-                        self.RunCatalogTable.update(
-                            record, nfadc=self.RunStats[daqname]['n'])
-                        self.RunCatalogTable.update(
-                            record, tfadc=self.RunStats[daqname]['t'])
-                    elif 'SADC' in daqname:
-                        self.RunCatalogTable.update(
-                            record, nsadc=self.RunStats[daqname]['n'])
-                        self.RunCatalogTable.update(
-                            record, tsadc=self.RunStats[daqname]['t'])
-                    elif 'IADC' in daqname:
-                        self.RunCatalogTable.update(
-                            record, niadc=self.RunStats[daqname]['n'])
-                        self.RunCatalogTable.update(
-                            record, tiadc=self.RunStats[daqname]['t'])
-                self.RunCatalogTable.commit()
+                    onlbit = 0
+                    msg = 'Tag run %06d as GOODRUN?' % self.RunNumber
+                    reply = self.msgbox_question(msg)
+                    if reply.clickedButton() is reply.button(QMessageBox.Yes):
+                        onlbit = 1
+
+                    stime_str = datetime.fromtimestamp(
+                        self.StartTime).strftime("%Y-%m-%d %H:%M:%S")
+                    etime_str = datetime.fromtimestamp(
+                        int(self.EndTime)).strftime("%Y-%m-%d %H:%M:%S")
+
+                    update_query = "UPDATE runcatalog SET stime=?, etime=?, onlbit=?"
+                    update_params = [stime_str, etime_str, onlbit]
+
+                    for daq in self.MonList:
+                        daqname = daq[0]
+                        n_val = self.RunStats[daqname]['n']
+                        t_val = self.RunStats[daqname]['t']
+
+                        if 'AADC' in daqname:
+                            update_query += ", naadc=?, taadc=?"
+                            update_params.extend([n_val, t_val])
+                        elif 'FADC' in daqname:
+                            update_query += ", nfadc=?, tfadc=?"
+                            update_params.extend([n_val, t_val])
+                        elif 'SADC' in daqname:
+                            update_query += ", nsadc=?, tsadc=?"
+                            update_params.extend([n_val, t_val])
+                        elif 'IADC' in daqname:
+                            update_query += ", niadc=?, tiadc=?"
+                            update_params.extend([n_val, t_val])
+
+                    update_query += " WHERE runnum=?"
+                    update_params.append(self.RunNumber)
+
+                    cursor.execute(update_query, tuple(update_params))
+                    conn.commit()
+
+            conn.close()
 
         curtime = time.strftime("%Y-%m-%d %H:%M:%S")
         stime = ''

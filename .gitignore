@@ -2,4 +2,5 @@
 /.vscode/
 /*.config
 /onlconsts.py
+/runcatalog.db
 /__pycache__
