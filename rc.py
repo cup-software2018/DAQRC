@@ -70,16 +70,46 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         timer.start()
 
     def check_and_start_logger(self):
-        """Monitor if logger.py is running in the background, and revive it if dead"""
-        logger_script = os.path.join(os.path.dirname(
-            os.path.abspath(__file__)), 'logger.py')
-        result = os.system("pgrep -f 'logger.py' > /dev/null")
+        """
+        1. Try connecting directly to port 9999 to verify the logger is alive with 100% certainty.
+        2. If there is no response (Connection refused), forcefully launch the logger in the background.
+        """
+        import socket
+        import subprocess
+        import os
+        import sys
+        import time
 
-        if result != 0:
-            print("Starting logger.py in background...")
+        is_running = False
+
+        # 1. Knock on port 9999 with a 0.5-second timeout
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.5)
+            try:
+                sock.connect((onlconsts.kLOGGERIPADDR, onlconsts.kLOGGERPORT))
+                is_running = True  # Connection successful! Logger is alive.
+            except (socket.timeout, ConnectionRefusedError):
+                is_running = False  # Connection failed! Logger is dead.
+
+        # 2. Force start if the logger is dead
+        if not is_running:
+            print("Logger daemon is not responding. Starting logger.py in background...")
+
+            logger_script = os.path.join(os.path.dirname(
+                os.path.abspath(__file__)), 'logger.py')
             log_file = '/tmp/amore_logger.log'
-            start_cmd = f"nohup {sys.executable} {logger_script} > {log_file} 2>&1 &"
+
+            # Python execution path (default to 'python' if sys.executable is empty)
+            python_exe = sys.executable if sys.executable else 'python'
+
+            # Completely detach as a background process using nohup
+            start_cmd = f"nohup {python_exe} {logger_script} > {log_file} 2>&1 &"
             os.system(start_cmd)
+
+            # Wait 1 second for the logger to start and open port 9999 (Crucial!)
+            time.sleep(1.0)
+        else:
+            print("Logger daemon is already running on port 9999.")
 
     def send_logger_cmd(self, req_data):
         """Send JSON request to Logger's port 9999 and receive response"""
@@ -443,7 +473,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         box.setWindowTitle('Error')
         box.setFont(font)
         box.setIcon(QMessageBox.Critical)
-        box.setText(message) 
+        box.setText(message)
         box.exec()
 
     def msgbox_question(self, message):
