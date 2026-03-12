@@ -74,12 +74,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         1. Try connecting directly to port 9999 to verify the logger is alive with 100% certainty.
         2. If there is no response (Connection refused), forcefully launch the logger in the background.
         """
-        import socket
-        import subprocess
-        import os
-        import sys
-        import time
-
         is_running = False
 
         # 1. Knock on port 9999 with a 0.5-second timeout
@@ -97,7 +91,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
             logger_script = os.path.join(os.path.dirname(
                 os.path.abspath(__file__)), 'logger.py')
-            log_file = '/tmp/amore_logger.log'
+            log_file = '/tmp/cupdaq_logger.log'
 
             # Python execution path (default to 'python' if sys.executable is empty)
             python_exe = sys.executable if sys.executable else 'python'
@@ -109,7 +103,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             # Wait 1 second for the logger to start and open port 9999 (Crucial!)
             time.sleep(1.0)
         else:
-            print("Logger daemon is already running on port 9999.")
+            print("Logger daemon is already running on port %d.", onlconsts.kLOGGERPORT)
 
     def send_logger_cmd(self, req_data):
         """Send JSON request to Logger's port 9999 and receive response"""

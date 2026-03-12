@@ -1,15 +1,17 @@
-import sys
-import time
-import os
-import sqlite3
-import yaml
-import socket
-import json
-import threading
-from datetime import datetime
-
-import onlconsts
 import onlutils
+import onlconsts
+from datetime import datetime
+import threading
+import json
+import socket
+import yaml
+import sqlite3
+import time
+import sys
+import os
+# Ensure the current directory is in the path to avoid ModuleNotFoundError when running via nohup
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 
 # Shared data in memory for real-time communication with RC
 shared_data = {
@@ -20,6 +22,9 @@ shared_data = {
     "MonNames": []
 }
 data_lock = threading.Lock()
+
+# Automatically terminate logger if DAQ is DOWN for this many seconds (e.g., 3600s = 1 hour)
+IDLE_TIMEOUT_SEC = 3600
 
 
 def handle_rc_requests():
@@ -124,19 +129,47 @@ def handle_rc_requests():
 
 def run_logger():
     """Monitor DAQ state and perform real-time DB logging at 1Hz"""
-    print("DAQ Logger daemon started.")
+    print(f"[{datetime.now()}] DAQ Logger daemon started.")
     last_run_number = -1
+    last_run_state = -1
     mon_list = []
     run_stats = {}
     mon_names = []
 
+    # Initialize the idle timer
+    last_active_time = time.time()
+
     while True:
         time.sleep(1.0)
+        current_time = time.time()
+
+        # 0. Check for idle timeout (Auto-termination)
+        if current_time - last_active_time > IDLE_TIMEOUT_SEC:
+            print(
+                f"[{datetime.now()}] Logger idle for {IDLE_TIMEOUT_SEC} seconds. Auto-terminating to save resources.")
+            break  # Exit the loop, ending the daemon
 
         try:
             run_state, _ = onlutils.query_runstate(
                 onlconsts.kDAQSERVER_ADDR, None)
 
+            # 1. Log state changes
+            if run_state != last_run_state:
+                if onlutils.check_state(run_state, onlconsts.kRUNNING):
+                    print(
+                        f"[{datetime.now()}] DAQ State changed to RUNNING (Run Started).")
+                elif onlutils.check_state(run_state, onlconsts.kRUNENDED):
+                    print(
+                        f"[{datetime.now()}] DAQ State changed to RUNENDED (Run Ended).")
+                elif onlutils.check_state(run_state, onlconsts.kDOWN):
+                    print(f"[{datetime.now()}] DAQ State changed to DOWN.")
+                last_run_state = run_state
+
+            # 2. Reset idle timer if DAQ is doing something (not DOWN)
+            if not onlutils.check_state(run_state, onlconsts.kDOWN):
+                last_active_time = current_time
+
+            # 3. Handle monitoring and DB writing
             if onlutils.check_state(run_state, onlconsts.kRUNNING) or onlutils.check_state(run_state, onlconsts.kRUNENDED):
                 with sqlite3.connect(onlconsts.kRUNCATALOGDBFILE) as conn:
                     conn.row_factory = sqlite3.Row
@@ -152,6 +185,10 @@ def run_logger():
                     config_file = record['config']
 
                     if current_run_number != last_run_number:
+                        if last_run_number != -1:
+                            print(
+                                f"[{datetime.now()}] New Run {current_run_number} detected. Loading configuration...")
+
                         mon_list.clear()
                         run_stats.clear()
                         mon_names.clear()
