@@ -24,8 +24,8 @@ data_lock = threading.Lock()
 
 def handle_rc_requests():
     """Local server thread handling RC commands (DB insert, tag save, state query)"""
-    host = '127.0.0.1'
-    port = 9999
+    host = onlconsts.kLOGGERIPADDR
+    port = onlconsts.kLOGERPORT
 
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

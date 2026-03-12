@@ -85,7 +85,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         """Send JSON request to Logger's port 9999 and receive response"""
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.connect(('127.0.0.1', 9999))
+                sock.connect((onlconsts.kLOGGERIPADDR, onlconsts.kLOGGERPORT))
                 sock.sendall(json.dumps(req_data).encode('utf-8'))
                 resp = sock.recv(1024*1024).decode('utf-8')
                 if resp:

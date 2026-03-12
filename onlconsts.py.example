@@ -52,3 +52,6 @@ kERROR = 7
 
 kDAQSTATE = ['Down', 'Booted', 'Configured',
              'Running', 'RunEnd', 'RunEnd', '', 'Error']
+
+kLOGGERIPADDR = 'localhost'
+kLOGGERPORT = 9999
