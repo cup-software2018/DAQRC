@@ -2,7 +2,7 @@ import os
 import sys
 import time
 import socket
-import sqlite3
+import json
 import yaml
 from datetime import datetime
 from PyQt5.QtCore import *
@@ -14,7 +14,8 @@ import onlutils
 
 
 def sortfunc(e):
-    return e[2]
+    # Ensure TCB(mode=0) gets sorted to the front before moving to the end
+    return e[0]
 
 
 class MainWindow(QMainWindow, Ui_MainWindow):
@@ -22,63 +23,40 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         super().__init__(*args, **kwargs)
         self.setupUi(self)
 
-        # DAQ software
         self.Bindir = onlconsts.kONLDAQ_DIR + '/bin/'
 
-        # Run configuration variables
+        # Launch the background logger daemon if it's dead when RC starts
+        self.check_and_start_logger()
+
         self.RunNumber = 0
         self.Shift = None
         self.RunType = None
         self.RunDesc = None
         self.ConfigFile = None
 
-        # Run control variables
         self.RunState = onlconsts.kDOWN
         self.RunSocket = None
         self.OnThisRC = False
 
-        # Run monitoring variables
         self.SubRunNumber = 0
         self.StartTime = 0
         self.EndTime = 0
-        self.IsMonSet = False
-        self.MonList = []
-
-        # Run statistics variables
+        self.MonNames = []
         self.RunStats = {}
 
-        #
-        # Run catalog database
-        #
-        if not os.path.isfile(onlconsts.kRUNCATALOGDBFILE):
-            msg = 'No run catalog DB file!\n(%s)' % onlconsts.kRUNCATALOGDBFILE
-            self.msgbox_error(msg)
-            exit()
-
-        #
-        # Setup UI
-        #
         self.center()
-
-        # Run type
         self.RunTypeConfig.addItems(onlconsts.kRUNTYPELIST)
 
-        # Run statistics
         font = QFont()
         font.setPointSize(14)
-
         self.RunStatsTextEdit = QTextEdit()
         self.RunStatsTextEdit.setFont(font)
         self.RunStatsTextEdit.setEnabled(False)
 
         layout = QVBoxLayout()
         layout.addWidget(self.RunStatsTextEdit)
-
         self.RunStatsBox.setLayout(layout)
 
-        #
-        # Signals and slots
-        #
         self.ConfigFileButton.clicked.connect(self.load_config)
         self.BootButton.clicked.connect(self.boot_run)
         self.ConfigButton.clicked.connect(self.config_run)
@@ -86,13 +64,35 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.EndButton.clicked.connect(self.end_run)
         self.ExitButton.clicked.connect(self.exit_run)
 
-        #
-        # QTimer
-        #
         timer = QTimer(self)
         timer.timeout.connect(self.update_runstate)
         timer.setInterval(100)
         timer.start()
+
+    def check_and_start_logger(self):
+        """Monitor if logger.py is running in the background, and revive it if dead"""
+        logger_script = os.path.join(os.path.dirname(
+            os.path.abspath(__file__)), 'logger.py')
+        result = os.system("pgrep -f 'logger.py' > /dev/null")
+
+        if result != 0:
+            print("Starting logger.py in background...")
+            log_file = '/tmp/amore_logger.log'
+            start_cmd = f"nohup {sys.executable} {logger_script} > {log_file} 2>&1 &"
+            os.system(start_cmd)
+
+    def send_logger_cmd(self, req_data):
+        """Send JSON request to Logger's port 9999 and receive response"""
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.connect(('127.0.0.1', 9999))
+                sock.sendall(json.dumps(req_data).encode('utf-8'))
+                resp = sock.recv(1024*1024).decode('utf-8')
+                if resp:
+                    return json.loads(resp)
+        except Exception as e:
+            print(f"Logger comm error: {e}")
+        return {}
 
     def load_config(self):
         result = QFileDialog.getOpenFileName(self, 'Load Configuration File', onlconsts.kDEFAULTCONFIGDIR,
@@ -104,82 +104,56 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             self.ConfigFileLabel.setText(msg)
 
     def boot_run(self):
-        self.IsMonSet = False
+        self.check_and_start_logger()  # Re-check logger survival before booting
+
         self.Shift = str(self.ShiftConfig.text())
         if not self.Shift:
-            self.msgbox_error('Shift crew missing!')
-            return
-
+            return self.msgbox_error('Shift crew missing!')
         if not self.ConfigFile:
-            self.msgbox_error('Run configuration file missing!')
-            return
+            return self.msgbox_error('Run configuration file missing!')
 
         self.RunType = str(self.RunTypeConfig.currentText())
         if not self.RunType:
-            self.msgbox_error('Run type missing!')
-            return
+            return self.msgbox_error('Run type missing!')
 
         self.RunDesc = str(self.RunDescConfig.toPlainText())
         configfile = os.path.basename(self.ConfigFile)
 
-        msg = '<pre>'
-        msg1 = 'Shift      : %s<br>' % self.Shift
-        msg2 = 'Run type   : %s<br>' % self.RunType
-        msg3 = 'Config file: %s\n<br>' % configfile
-        msg += msg1 + msg2 + msg3
-        msg += '<b>Do you want to boot this run?</b>'
-        msg += '</pre>'
-
+        msg = f'<pre>Shift      : {self.Shift}<br>Run type   : {self.RunType}<br>Config file: {configfile}\n<br><b>Do you want to boot this run?</b></pre>'
         reply = self.msgbox_question(msg)
         if reply.clickedButton() is reply.button(QMessageBox.No):
             return
 
-        # ---------------------------------------------------------
-        # 1. Get run number from run catalog using sqlite3
-        # ---------------------------------------------------------
-        try:
-            with sqlite3.connect(onlconsts.kRUNCATALOGDBFILE) as conn:
-                cursor = conn.cursor()
-                insert_query = """
-                    INSERT INTO runcatalog (shift, runtype, rundesc, config)
-                    VALUES (?, ?, ?, ?)
-                """
-                cursor.execute(insert_query, (self.Shift,
-                               self.RunType, self.RunDesc, self.ConfigFile))
-                self.RunNumber = cursor.lastrowid
-                conn.commit()
-        except sqlite3.Error as e:
-            self.msgbox_error('Database Error:\n%s' % e)
-            return
+        # Request DB Insert to Logger
+        req = {
+            "cmd": "BOOT_RUN",
+            "shift": self.Shift,
+            "runtype": self.RunType,
+            "rundesc": self.RunDesc,
+            "config": self.ConfigFile
+        }
+        resp = self.send_logger_cmd(req)
+        if "run_num" in resp:
+            self.RunNumber = resp["run_num"]
+        else:
+            return self.msgbox_error("Logger failed to boot run (DB error).")
 
         run_number = self.RunNumber
         config_file = self.ConfigFile
-
         onldaq_dir = onlconsts.kONLDAQ_DIR
         rawdata_dir = onlconsts.kRAWDATA_DIR
 
-        # ---------------------------------------------------------
-        # 2. Copy the Single Config File to DAQ Server
-        # ---------------------------------------------------------
         target_config = '%s/CONFIG/%06d.yml' % (rawdata_dir, run_number)
         cmd = 'scp %s %s:%s' % (
             config_file, onlconsts.kDAQSERVER_IP, target_config)
         os.system(cmd)
 
-        # ---------------------------------------------------------
-        # 3. Parse the YAML configuration file
-        # ---------------------------------------------------------
         daqlist = []
         try:
             with open(config_file, 'r', encoding='utf-8') as fp:
-                config_data = yaml.safe_load(fp)
+                config_data = yaml.safe_load(fp) or {}
 
-            if config_data is None:
-                config_data = {}
-
-            daq_items = config_data.get('DAQ', [])
-
-            for item in daq_items:
+            for item in config_data.get('DAQ', []):
                 dnum = int(item.get('ID', 0))
                 name = str(item.get('NAME', ''))
                 ip = str(item.get('IP', ''))
@@ -191,25 +165,15 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                     mode = 2
                 else:
                     mode = 1
-
-                daq = (mode, dnum, name, ip, port)
-                daqlist.append(daq)
-
+                daqlist.append((mode, dnum, name, ip, port))
         except Exception as e:
-            self.msgbox_error('Failed to load YAML config:\n%s' % e)
-            return
+            return self.msgbox_error('Failed to load YAML config:\n%s' % e)
 
-        # ---------------------------------------------------------
-        # 4. Prepare and Execute DAQ Processes
-        # ---------------------------------------------------------
         fformat = '-b' if onlconsts.kOUTPUTFILEFORMAT == 'hdf5' else '-a'
-
         optlist = []
         for daq in daqlist:
-            mode = daq[0]
-            dnum = daq[1]
-            name = daq[2]
-            topt = daq[2][0].lower()
+            mode, dnum, name, ip, port = daq
+            topt = name[0].lower()
 
             if mode == 0:
                 sopt = '-t -r %d -n %s ' % (run_number, name)
@@ -229,8 +193,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                         break
 
             dopt += ' ' + fformat + ' '
-            dopt = (mode, sopt, dopt, daq[3], daq[4])
-            optlist.append(dopt)
+            optlist.append((mode, sopt, dopt, ip, port))
 
         optlist.sort(key=sortfunc)
         optlist.append(optlist.pop(0))
@@ -238,34 +201,20 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         onldaqdiropt = '--onldaqdir=%s ' % onldaq_dir
         rawdatadiropt = '--rawdatadir=%s ' % rawdata_dir
 
-        # execute daq first
         for daq in optlist:
             mode = daq[0]
-            daq_ip = daq[3]
-            shell_option = daq[1]
-            shell_option += onldaqdiropt
-            shell_option += rawdatadiropt
-            daq_option = daq[2]
-
             if mode > 0:
                 cmd = self.Bindir + \
-                    '%s %s -o "%s"' % (onlconsts.kEXESCRIPT,
-                                       shell_option, daq_option)
-                result = onlutils.execute_cmd(cmd, daq_ip)
+                    '%s %s%s -o "%s"' % (onlconsts.kEXESCRIPT,
+                                         daq[1], onldaqdiropt+rawdatadiropt, daq[2])
+                onlutils.execute_cmd(cmd, daq[3])
         time.sleep(1)
 
-        # execute tcb
         tcb = optlist[-1]
-        tcb_ip = tcb[3]
-        tcb_port = tcb[4]
-        shell_option = tcb[1]
-        shell_option += onldaqdiropt
-        shell_option += rawdatadiropt
-        tcb_option = tcb[2]
-
         cmd = self.Bindir + \
-            '%s %s -o "%s"' % (onlconsts.kEXESCRIPT, shell_option, tcb_option)
-        result = onlutils.execute_cmd(cmd, tcb_ip)
+            '%s %s%s -o "%s"' % (onlconsts.kEXESCRIPT,
+                                 tcb[1], onldaqdiropt+rawdatadiropt, tcb[2])
+        onlutils.execute_cmd(cmd, tcb[3])
 
         self.OnThisRC = True
         self.StartTime = 0
@@ -284,18 +233,19 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         reply = self.msgbox_question(msg)
         if reply.clickedButton() is reply.button(QMessageBox.No):
             return
-
         onlutils.send_command(self.RunSocket, onlconsts.kENDRUN)
         self.EndButton.setStyleSheet("background-color: yellow")
 
     def exit_run(self):
-        # Prevent leaving orphan processes if state is not fully ended or down
-        if self.RunState not in (onlconsts.kDOWN, onlconsts.kPROCENDED):
+        is_safe_state = (
+            self.RunState in (onlconsts.kDOWN, onlconsts.kPROCENDED) or
+            onlutils.check_state(self.RunState, onlconsts.kRUNENDED)
+        )
+        if not is_safe_state:
             daqstate = onlutils.get_state(self.RunState)
             if onlutils.check_error(self.RunState):
                 daqstate = onlconsts.kERROR
             state_str = onlconsts.kDAQSTATE[daqstate]
-
             msg = '<pre><b>Run %06d is currently active (State: %s).<br>Are you sure to FORCE exit without ending properly?</b></pre>' % (
                 self.RunNumber, state_str)
             reply = self.msgbox_question(msg)
@@ -306,248 +256,91 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             onlutils.send_command(self.RunSocket, onlconsts.kEXIT)
 
     def update_runstate(self):
-        # Query the current run state from the DAQ server
         self.RunState, self.RunSocket = onlutils.query_runstate(
             onlconsts.kDAQSERVER_ADDR, self.RunSocket)
         self.set_runstate(self.RunState)
 
-        mess = []
-
-        # ---------------------------------------------------------
-        # 1. Sync RC state with the latest run in the DB
-        # ---------------------------------------------------------
+        # 1. Sync with Logger
         if not self.OnThisRC and self.RunState is not onlconsts.kDOWN:
-            try:
-                with sqlite3.connect(onlconsts.kRUNCATALOGDBFILE) as conn:
-                    conn.row_factory = sqlite3.Row
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        "SELECT * FROM runcatalog ORDER BY runnum DESC LIMIT 1")
-                    record = cursor.fetchone()
+            resp = self.send_logger_cmd({"cmd": "SYNC_LATEST"})
+            if resp and "runnum" in resp:
+                self.RunNumber = resp["runnum"]
+                self.Shift = resp["shift"]
+                self.RunType = resp["runtype"]
+                self.RunDesc = resp["rundesc"]
+                self.ConfigFile = resp["config"]
 
-                    if record:
-                        self.RunNumber = record['runnum']
-                        self.Shift = record['shift']
-                        self.RunType = record['runtype']
-                        self.RunDesc = record['rundesc']
-                        self.ConfigFile = record['config']
+                self.ShiftConfig.setText(self.Shift)
+                index = self.RunTypeConfig.findText(
+                    self.RunType, Qt.MatchFixedString)
+                self.RunTypeConfig.setCurrentIndex(index)
+                self.RunDescConfig.setText(self.RunDesc)
 
-                        self.ShiftConfig.setText(self.Shift)
-                        index = self.RunTypeConfig.findText(
-                            self.RunType, Qt.MatchFixedString)
-                        self.RunTypeConfig.setCurrentIndex(index)
-                        self.RunDescConfig.setText(self.RunDesc)
+                configfile = os.path.basename(self.ConfigFile)
+                self.ConfigFileLabel.setText(
+                    '<font color="blue"><b>%s</b></font> loaded' % configfile)
+                self.OnThisRC = True
 
-                        configfile = os.path.basename(self.ConfigFile)
-                        msg = '<font color="blue"><b>%s</b></font> loaded' % configfile
-                        self.ConfigFileLabel.setText(msg)
-                        self.OnThisRC = True
-            except sqlite3.Error as e:
-                print(f"Database error during sync: {e}")
+        # 2. Get Stats from Logger
+        if onlutils.check_state(self.RunState, onlconsts.kRUNNING) or onlutils.check_state(self.RunState, onlconsts.kRUNENDED):
+            resp = self.send_logger_cmd({"cmd": "GET_STATS"})
+            if resp:
+                self.RunStats = resp.get("RunStats", {})
+                self.SubRunNumber = resp.get("SubRunNumber", 0)
+                self.StartTime = resp.get("StartTime", 0)
+                self.MonNames = resp.get("MonNames", [])
 
-        # ---------------------------------------------------------
-        # 2. Set up monitoring sockets based on the YAML config
-        # ---------------------------------------------------------
-        if not self.IsMonSet and self.RunState is not onlconsts.kDOWN:
-            self.MonList.clear()
-            try:
-                with open(self.ConfigFile, 'r', encoding='utf-8') as fp:
-                    config_data = yaml.safe_load(fp)
+                # Update endtime only if it's available and not set locally
+                logger_endtime = resp.get("EndTime", 0)
+                if logger_endtime > 0:
+                    self.EndTime = logger_endtime
 
-                if config_data is None:
-                    config_data = {}
-
-                daq_items = config_data.get('DAQ', [])
-
-                for item in daq_items:
-                    name = str(item.get('NAME', ''))
-                    ip = str(item.get('IP', ''))
-                    port = int(item.get('PORT', 0))
-
-                    if 'TCB' in name:
-                        continue
-
-                    socket = onlutils.get_connection((ip, port))
-                    onlutils.send_command(socket, onlconsts.kQUERYMONITOR)
-                    onlutils.recv_message(socket, mess)
-
-                    if mess[0] > 0:
-                        daq = (name, socket)
-                        self.MonList.append(daq)
-
-                        self.RunStats[name] = {}
-                        self.RunStats[name]['n'] = 0
-                        self.RunStats[name]['dn'] = 0
-                        self.RunStats[name]['t'] = 0.0
-                        self.RunStats[name]['dt'] = 0.0
-                        self.RunStats[name]['ar'] = 0.0
-                        self.RunStats[name]['sr'] = 0.0
-
-            except Exception as e:
-                print(f"Failed to load YAML for monitoring: {e}")
-
-            self.IsMonSet = True
-
-        # ---------------------------------------------------------
-        # 3. Update stats periodically when the run is RUNNING
-        # ---------------------------------------------------------
-        if onlutils.check_state(self.RunState, onlconsts.kRUNNING):
-            onlutils.send_command(self.RunSocket, onlconsts.kQUERYRUNINFO)
-            onlutils.recv_message(self.RunSocket, mess)
-            self.SubRunNumber = mess[1]
-            self.StartTime = mess[2]
-
-            for daq in self.MonList:
-                name = daq[0]
-                socket = daq[1]
-                onlutils.send_command(socket, onlconsts.kQUERYTRGINFO)
-                onlutils.recv_message(socket, mess)
-
-                n = self.RunStats[name]['n'] = mess[0]
-                t = self.RunStats[name]['t'] = mess[1]/1000000000.
-                if t > 0:
-                    self.RunStats[name]['ar'] = n/t
-                dt = t - self.RunStats[name]['dt']
-                dn = n - self.RunStats[name]['dn']
-                if dt > 0:
-                    self.RunStats[name]['sr'] = dn/dt
-
-                self.RunStats[name]['dt'] = t
-                self.RunStats[name]['dn'] = n
-
-            # ---------------------------------------------------------
-            # 3.1. Real-time Database Update (Throttled to 1Hz max)
-            # ---------------------------------------------------------
-            current_time = time.time()
-            if not hasattr(self, 'last_db_update_time') or (current_time - self.last_db_update_time) >= 1.0:
-                self.last_db_update_time = current_time
-
-                update_query = "UPDATE runcatalog SET "
-                update_params = []
-                set_clauses = []
-
-                for daq in self.MonList:
-                    daqname = daq[0]
-                    n_val = self.RunStats[daqname]['n']
-                    t_val = self.RunStats[daqname]['t']
-
-                    if 'AADC' in daqname:
-                        set_clauses.extend(["naadc=?", "taadc=?"])
-                        update_params.extend([n_val, t_val])
-                    elif 'FADC' in daqname:
-                        set_clauses.extend(["nfadc=?", "tfadc=?"])
-                        update_params.extend([n_val, t_val])
-                    elif 'SADC' in daqname:
-                        set_clauses.extend(["nsadc=?", "tsadc=?"])
-                        update_params.extend([n_val, t_val])
-                    elif 'IADC' in daqname:
-                        set_clauses.extend(["niadc=?", "tiadc=?"])
-                        update_params.extend([n_val, t_val])
-
-                if set_clauses:
-                    update_query += ", ".join(set_clauses) + " WHERE runnum=?"
-                    update_params.append(self.RunNumber)
-
-                    try:
-                        with sqlite3.connect(onlconsts.kRUNCATALOGDBFILE) as conn:
-                            cursor = conn.cursor()
-                            cursor.execute(update_query, tuple(update_params))
-                            conn.commit()
-                    except sqlite3.Error as e:
-                        print(f"Database error during live update: {e}")
-
-        # ---------------------------------------------------------
-        # 4. Finalize Database entry when the run ends
-        # ---------------------------------------------------------
+        # 3. Handle End of Run Tagging
         if onlutils.check_state(self.RunState, onlconsts.kRUNENDED):
-            try:
-                with sqlite3.connect(onlconsts.kRUNCATALOGDBFILE) as conn:
-                    conn.row_factory = sqlite3.Row
-                    cursor = conn.cursor()
+            if not getattr(self, '_is_asking_goodrun', False):
+                self._is_asking_goodrun = True
 
-                    cursor.execute(
-                        "SELECT etime FROM runcatalog WHERE runnum = ?", (self.RunNumber,))
-                    record = cursor.fetchone()
+                # Fetch endtime directly just in case logger hasn't yet
+                if not self.EndTime:
+                    onlutils.send_command(
+                        self.RunSocket, onlconsts.kQUERYRUNINFO)
+                    mess = []
+                    onlutils.recv_message(self.RunSocket, mess)
+                    if len(mess) > 3:
+                        self.EndTime = mess[3]
 
-                    if record:
-                        etime = record['etime']
+                onlbit = 0
+                msg = 'Tag run %06d as GOODRUN?' % self.RunNumber
+                reply = self.msgbox_question(msg)
+                if reply.clickedButton() is reply.button(QMessageBox.Yes):
+                    onlbit = 1
 
-                        if not etime:
-                            onlutils.send_command(
-                                self.RunSocket, onlconsts.kQUERYRUNINFO)
-                            onlutils.recv_message(self.RunSocket, mess)
-                            self.EndTime = mess[3]
+                stime_str = datetime.fromtimestamp(self.StartTime).strftime(
+                    "%Y-%m-%d %H:%M:%S") if self.StartTime else ""
+                etime_str = datetime.fromtimestamp(int(self.EndTime)).strftime(
+                    "%Y-%m-%d %H:%M:%S") if self.EndTime else ""
 
-                            for daq in self.MonList:
-                                name = daq[0]
-                                socket = daq[1]
-                                onlutils.send_command(
-                                    socket, onlconsts.kQUERYTRGINFO)
-                                onlutils.recv_message(socket, mess)
-                                self.RunStats[name]['n'] = mess[0]
-                                self.RunStats[name]['t'] = mess[1]/1000000000.
+                req = {
+                    "cmd": "TAG_GOODRUN",
+                    "run_num": self.RunNumber,
+                    "onlbit": onlbit,
+                    "stime_str": stime_str,
+                    "etime_str": etime_str,
+                    "final_stats": self.RunStats
+                }
+                self.send_logger_cmd(req)
 
-                            onlbit = 0
-                            msg = 'Tag run %06d as GOODRUN?' % self.RunNumber
-                            reply = self.msgbox_question(msg)
-                            if reply.clickedButton() is reply.button(QMessageBox.Yes):
-                                onlbit = 1
-
-                            stime_str = datetime.fromtimestamp(
-                                self.StartTime).strftime("%Y-%m-%d %H:%M:%S")
-                            etime_str = datetime.fromtimestamp(
-                                int(self.EndTime)).strftime("%Y-%m-%d %H:%M:%S")
-
-                            update_query = "UPDATE runcatalog SET stime=?, etime=?, onlbit=?"
-                            update_params = [stime_str, etime_str, onlbit]
-
-                            for daq in self.MonList:
-                                daqname = daq[0]
-                                n_val = self.RunStats[daqname]['n']
-                                t_val = self.RunStats[daqname]['t']
-
-                                if 'AADC' in daqname:
-                                    update_query += ", naadc=?, taadc=?"
-                                    update_params.extend([n_val, t_val])
-                                elif 'FADC' in daqname:
-                                    update_query += ", nfadc=?, tfadc=?"
-                                    update_params.extend([n_val, t_val])
-                                elif 'SADC' in daqname:
-                                    update_query += ", nsadc=?, tsadc=?"
-                                    update_params.extend([n_val, t_val])
-                                elif 'IADC' in daqname:
-                                    update_query += ", niadc=?, tiadc=?"
-                                    update_params.extend([n_val, t_val])
-
-                            update_query += " WHERE runnum=?"
-                            update_params.append(self.RunNumber)
-
-                            cursor.execute(update_query, tuple(update_params))
-                            conn.commit()
-
-            except sqlite3.Error as e:
-                print(f"Database error during run end: {e}")
-
-        # ---------------------------------------------------------
-        # 5. Format text and update the GUI TextEdit
-        # ---------------------------------------------------------
+        # 4. Format Output Text
         curtime = time.strftime("%Y-%m-%d %H:%M:%S")
-        stime = ''
-        if self.StartTime > 0:
-            stime = datetime.fromtimestamp(
-                self.StartTime).strftime("%Y-%m-%d %H:%M:%S")
-        etime = ''
-        if self.EndTime > 0:
-            etime = datetime.fromtimestamp(
-                int(self.EndTime)).strftime("%Y-%m-%d %H:%M:%S")
+        stime = datetime.fromtimestamp(self.StartTime).strftime(
+            "%Y-%m-%d %H:%M:%S") if self.StartTime > 0 else ''
+        etime = datetime.fromtimestamp(int(self.EndTime)).strftime(
+            "%Y-%m-%d %H:%M:%S") if self.EndTime > 0 else ''
 
         daqtime = ''
-        # Prevent IndexError and KeyError if MonList is empty or stats aren't ready
-        if self.IsMonSet and self.MonList:
-            first_daq_name = self.MonList[0][0]
-            if first_daq_name in self.RunStats:
-                daqtime = onlutils.HMSFormatter(
-                    self.RunStats[first_daq_name]['t'])
+        if self.MonNames and self.MonNames[0] in self.RunStats:
+            daqtime = onlutils.HMSFormatter(
+                self.RunStats[self.MonNames[0]]['t'])
 
         daqstate = onlutils.get_state(self.RunState)
         if onlutils.check_error(self.RunState):
@@ -562,16 +355,14 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         summary += '      <b>End Time</b>: %s<br>' % etime
         summary += '      <b>DAQ Time</b>: %s<br><br>' % daqtime
 
-        if self.IsMonSet:
-            for daq in self.MonList:
-                daq_name = daq[0]
-                if daq_name in self.RunStats:
-                    n = self.RunStats[daq_name]['n']
-                    ar = self.RunStats[daq_name]['ar']
-                    sr = self.RunStats[daq_name]['sr']
-                    stat = '%10d [%6.1f %6.1f Hz]' % (n, sr, ar)
-                    summary += '%s' % (' ' * (14 - len(daq_name)))
-                    summary += '<b>%s</b>: %s<br>' % (daq_name, stat)
+        for daq_name in self.MonNames:
+            if daq_name in self.RunStats:
+                n = self.RunStats[daq_name]['n']
+                ar = self.RunStats[daq_name]['ar']
+                sr = self.RunStats[daq_name]['sr']
+                stat = '%10d [%6.1f %6.1f Hz]' % (n, sr, ar)
+                summary += '%s' % (' ' * (14 - len(daq_name)))
+                summary += '<b>%s</b>: %s<br>' % (daq_name, stat)
 
         summary += '</font></pre>'
         self.RunStatsTextEdit.setText(summary)
@@ -652,7 +443,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         box.setWindowTitle('Error')
         box.setFont(font)
         box.setIcon(QMessageBox.Critical)
-        box.setText(message)
+        box.setText(message) 
         box.exec()
 
     def msgbox_question(self, message):
@@ -670,10 +461,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-
-    # create the main window
     window = MainWindow()
     window.show()
-
-    # start the event loop
     sys.exit(app.exec())
