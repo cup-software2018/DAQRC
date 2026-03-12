@@ -202,7 +202,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         # ---------------------------------------------------------
         # 4. Prepare and Execute DAQ Processes
         # ---------------------------------------------------------
-        fformat = '-b' if onlconst.kOUTPUTFILEFORMAT == 'hdf5' else '-a'
+        fformat = '-b' if onlconsts.kOUTPUTFILEFORMAT == 'hdf5' else '-a'
 
         optlist = []
         for daq in daqlist:
