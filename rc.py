@@ -103,7 +103,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             # Wait 1 second for the logger to start and open port 9999 (Crucial!)
             time.sleep(1.0)
         else:
-            print("Logger daemon is already running on port %d.", onlconsts.kLOGGERPORT)
+            print("Logger daemon is already running on port %d." %
+                  onlconsts.kLOGGERPORT)
 
     def send_logger_cmd(self, req_data):
         """Send JSON request to Logger's port 9999 and receive response"""
@@ -147,6 +148,13 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         reply = self.msgbox_question(msg)
         if reply.clickedButton() is reply.button(QMessageBox.No):
             return
+
+        self.RunStats.clear()
+        self.MonNames.clear()
+        self.SubRunNumber = 0
+        self.StartTime = 0
+        self.EndTime = 0
+        self.RunStatsTextEdit.clear()
 
         # Request DB Insert to Logger
         req = {
@@ -313,11 +321,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 self.SubRunNumber = resp.get("SubRunNumber", 0)
                 self.StartTime = resp.get("StartTime", 0)
                 self.MonNames = resp.get("MonNames", [])
-
-                # Update endtime only if it's available and not set locally
-                logger_endtime = resp.get("EndTime", 0)
-                if logger_endtime > 0:
-                    self.EndTime = logger_endtime
+                self.EndTime = resp.get("EndTime", 0)
 
         # 3. Handle End of Run Tagging
         if onlutils.check_state(self.RunState, onlconsts.kRUNENDED):

@@ -9,6 +9,7 @@ import sqlite3
 import time
 import sys
 import os
+
 # Ensure the current directory is in the path to avoid ModuleNotFoundError when running via nohup
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
@@ -221,6 +222,10 @@ def run_logger():
                         with data_lock:
                             shared_data['MonNames'] = mon_names
                             shared_data['RunStats'] = run_stats
+                            # [Fix applied] Completely reset shared times to prevent ghost data
+                            shared_data['StartTime'] = 0
+                            shared_data['EndTime'] = 0
+                            shared_data['SubRunNumber'] = 0
                         last_run_number = current_run_number
 
                     try:
@@ -234,8 +239,11 @@ def run_logger():
                             with data_lock:
                                 shared_data['SubRunNumber'] = mess[1]
                                 shared_data['StartTime'] = mess[2]
+                                # [Fix applied] Update EndTime if DAQ sends it, otherwise force to 0
                                 if len(mess) > 3:
                                     shared_data['EndTime'] = mess[3]
+                                else:
+                                    shared_data['EndTime'] = 0
                         daq_sock.close()
                     except:
                         pass
