@@ -8,7 +8,7 @@ kDAQSERVER_ADDR = (kDAQSERVER_IP, kDAQSERVER_PORT)
 # if RC is running on same server with DAQ
 kISREMOTEDAQ = False
 
-# kONLDAQ_DIR and kRAWDATA_DIR at DAQ server
+# kONLDAQ_DIR and kRAWDATA_DIR at DAQ server, kRAWDATA_DIR should have RAW, LOG, and CONFIG directories
 kONLDAQ_DIR = ''
 kRAWDATA_DIR = ''
 
