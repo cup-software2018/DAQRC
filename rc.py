@@ -202,6 +202,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         # ---------------------------------------------------------
         # 4. Prepare and Execute DAQ Processes
         # ---------------------------------------------------------
+        fformat = '-b' if onlconst.kOUTPUTFILEFORMAT == 'hdf5' else '-a'
+
         optlist = []
         for daq in daqlist:
             mode = daq[0]
@@ -226,6 +228,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                         dopt += '-x '
                         break
 
+            dopt += ' ' + fformat + ' '
             dopt = (mode, sopt, dopt, daq[3], daq[4])
             optlist.append(dopt)
 

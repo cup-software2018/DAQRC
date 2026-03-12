@@ -21,6 +21,8 @@ kDEFAULTCONFIGDIR = ''
 #
 kRUNTYPELIST = ['', 'physics', 'calibration', 'test']
 
+kOUTPUTFILEFORMAT = 'hdf5' # hdf5 or root
+
 # ===========================================================
 #
 # Do not modify from here!!!
