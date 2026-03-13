@@ -26,7 +26,7 @@ def check_error(status):
     return False
 
 
-def encode_message(mess1, mess2 = 0, mess3 = 0, mess4 = 0):
+def encode_message(mess1, mess2=0, mess3=0, mess4=0):
     data = bytearray()
 
     for i in range(8):
@@ -36,7 +36,7 @@ def encode_message(mess1, mess2 = 0, mess3 = 0, mess4 = 0):
     for i in range(8):
         data.append((mess3 >> 8*i) & 0xFF)
     for i in range(8):
-        data.append((mess4 >> 8*i) & 0xFF)                        
+        data.append((mess4 >> 8*i) & 0xFF)
 
     return data
 
@@ -56,13 +56,18 @@ def decode_message(data):
     return mess1, mess2, mess3, mess4
 
 
-def get_connection(ipaddr):
+def get_connection(ipaddr, timeout_sec=2.0):
     connection = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # Set timeout to prevent infinite blocking on connect, send, and recv
+    connection.settimeout(timeout_sec)
     try:
         connection.connect(ipaddr)
     except Exception as e:
         return None
     return connection
+
+# send_command and recv_message will naturally benefit from this timeout
+# socket.timeout exception will be caught by their existing except blocks
 
 
 def send_command(connection, cmd):
@@ -115,7 +120,7 @@ def query_runstate(ipaddr, connection):
 
     if status is None:
         status = onlconsts.kDOWN
-        
+
     return status, connection
 
 
@@ -158,4 +163,4 @@ def HMSFormatter(value):
     h = value // 3600
     m = (value - h * 3600) // 60
     s = value % 60
-    return "%02d:%02d:%02d" % (h,m,s)
+    return "%02d:%02d:%02d" % (h, m, s)
