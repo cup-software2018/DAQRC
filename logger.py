@@ -129,7 +129,7 @@ def handle_rc_requests():
 
 
 def run_logger():
-    """Monitor DAQ state and perform real-time DB logging at 1Hz"""
+    """Monitor DAQ state and perform real-time DB logging at 1Hz using persistent sockets."""
     print(f"[{datetime.now()}] DAQ Logger daemon started.")
     last_run_number = -1
     last_run_state = -1
@@ -142,7 +142,8 @@ def run_logger():
 
     last_active_time = time.time()
 
-    # Persistent connection for DAQ Info to prevent TIME_WAIT port exhaustion
+    # Persistent sockets to prevent TIME_WAIT port exhaustion and memory leaks
+    daq_state_sock = None
     daq_info_sock = None
 
     while True:
@@ -156,10 +157,33 @@ def run_logger():
             break
 
         try:
-            run_state, _ = onlutils.query_runstate(
-                onlconsts.kDAQSERVER_ADDR, None)
+            # --- 1. Query DAQ State (Using Persistent Connection) ---
+            if daq_state_sock is None:
+                daq_state_sock = onlutils.get_connection(
+                    onlconsts.kDAQSERVER_ADDR)
+                if daq_state_sock:
+                    daq_state_sock.settimeout(2.0)
 
-            # 1. Log state changes
+            run_state = onlconsts.kDOWN
+            if daq_state_sock:
+                try:
+                    if not onlutils.send_command(daq_state_sock, onlconsts.kQUERYDAQSTATUS):
+                        raise Exception("Send failed")
+
+                    mess = []
+                    if not onlutils.recv_message(daq_state_sock, mess) or not mess:
+                        raise Exception("Recv failed")
+
+                    run_state = mess[0]
+                except Exception:
+                    # Connection dropped or timed out. Clean up and retry next tick.
+                    try:
+                        daq_state_sock.close()
+                    except:
+                        pass
+                    daq_state_sock = None
+
+            # --- 2. Log state changes ---
             if run_state != last_run_state:
                 if onlutils.check_state(run_state, onlconsts.kRUNNING):
                     print(
@@ -171,11 +195,11 @@ def run_logger():
                     print(f"[{datetime.now()}] DAQ State changed to DOWN.")
                 last_run_state = run_state
 
-            # 2. Reset idle timer if DAQ is not DOWN
+            # --- 3. Reset idle timer if DAQ is doing something ---
             if not onlutils.check_state(run_state, onlconsts.kDOWN):
                 last_active_time = current_time
 
-            # 3. Handle monitoring and DB writing
+            # --- 4. Handle monitoring and DB writing ---
             if onlutils.check_state(run_state, onlconsts.kRUNNING) or onlutils.check_state(run_state, onlconsts.kRUNENDED):
                 with sqlite3.connect(onlconsts.kRUNCATALOGDBFILE) as conn:
                     conn.row_factory = sqlite3.Row
@@ -196,7 +220,7 @@ def run_logger():
                             print(
                                 f"[{datetime.now()}] New Run {current_run_number} detected. Loading configuration...")
 
-                        # Close all existing monitor sockets gracefully
+                        # Close all existing monitor sockets gracefully before clearing
                         for mon in mon_list:
                             if mon['sock']:
                                 try:
@@ -219,8 +243,7 @@ def run_logger():
                                 if 'TCB' in name:
                                     continue
 
-                                # Store connection details, but don't connect immediately here.
-                                # Connection will be handled dynamically in the polling loop.
+                                # Store connection details, but defer connection to the polling loop
                                 mon_list.append(
                                     {'name': name, 'ip': ip, 'port': port, 'sock': None})
                                 mon_names.append(name)
@@ -240,16 +263,16 @@ def run_logger():
                     daq_info_sock = onlutils.get_connection(
                         onlconsts.kDAQSERVER_ADDR)
                     if daq_info_sock:
-                        # Prevent indefinite blocking
                         daq_info_sock.settimeout(2.0)
 
                 if daq_info_sock:
                     try:
                         if not onlutils.send_command(daq_info_sock, onlconsts.kQUERYRUNINFO):
                             raise Exception("Send failed")
+
                         mess = []
                         if not onlutils.recv_message(daq_info_sock, mess) or not mess:
-                            raise Exception("Recv empty or failed")
+                            raise Exception("Recv failed")
 
                         with data_lock:
                             shared_data['SubRunNumber'] = mess[1]
@@ -257,15 +280,14 @@ def run_logger():
                             shared_data['EndTime'] = mess[3] if len(
                                 mess) > 3 else 0
                     except Exception:
-                        # If connection drops, clear socket. Will reconnect next tick.
                         try:
                             daq_info_sock.close()
                         except:
                             pass
                         daq_info_sock = None
 
-                # --- Polling Monitor Modules & Aggregating DB Updates ---
-                # Safe structure to sum triggers and find max time per module type
+                # --- Polling Monitor Modules & Aggregating Data ---
+                # Safely aggregate triggers (n) and max time (t) by ADC type
                 db_updates = {
                     'AADC': {'n': 0, 't': 0.0},
                     'FADC': {'n': 0, 't': 0.0},
@@ -295,13 +317,14 @@ def run_logger():
                                     except:
                                         pass
                                     mon['sock'] = None
-                                    continue  # Skip this loop tick if reconnect failed
+                                    continue
 
                         # Polling data
                         if mon['sock']:
                             try:
                                 if not onlutils.send_command(mon['sock'], onlconsts.kQUERYTRGINFO):
                                     raise Exception("Send failed")
+
                                 mess = []
                                 if not onlutils.recv_message(mon['sock'], mess) or not mess:
                                     raise Exception("Recv empty or failed")
@@ -320,7 +343,7 @@ def run_logger():
                                 run_stats[name]['dt'] = t
                                 run_stats[name]['dn'] = n
 
-                                # Accumulate values based on ADC type to prevent SQL duplication
+                                # Accumulate values based on ADC type
                                 for adc_type in db_updates.keys():
                                     if adc_type in name:
                                         db_updates[adc_type]['n'] += n
@@ -341,7 +364,7 @@ def run_logger():
                     update_params = []
                     set_clauses = []
 
-                    # Only append columns if data actually exists for that type
+                    # Construct query dynamically to avoid duplicate columns
                     for adc_type, stats in db_updates.items():
                         if stats['t'] > 0:
                             set_clauses.extend(
