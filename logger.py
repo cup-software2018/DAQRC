@@ -134,7 +134,7 @@ def run_logger():
     last_run_number = -1
     last_run_state = -1
 
-    # mon_list stores dicts to keep track of connection info and states for dynamic reconnection
+    # mon_list stores connection info and states for dynamic reconnection
     # Format: {'name': name, 'ip': ip, 'port': port, 'sock': socket_object}
     mon_list = []
     run_stats = {}
@@ -169,14 +169,11 @@ def run_logger():
                 try:
                     if not onlutils.send_command(daq_state_sock, onlconsts.kQUERYDAQSTATUS):
                         raise Exception("Send failed")
-
                     mess = []
                     if not onlutils.recv_message(daq_state_sock, mess) or not mess:
                         raise Exception("Recv failed")
-
                     run_state = mess[0]
                 except Exception:
-                    # Connection dropped or timed out. Clean up and retry next tick.
                     try:
                         daq_state_sock.close()
                     except:
@@ -195,7 +192,7 @@ def run_logger():
                     print(f"[{datetime.now()}] DAQ State changed to DOWN.")
                 last_run_state = run_state
 
-            # --- 3. Reset idle timer if DAQ is doing something ---
+            # --- 3. Reset idle timer if DAQ is not DOWN ---
             if not onlutils.check_state(run_state, onlconsts.kDOWN):
                 last_active_time = current_time
 
@@ -220,7 +217,6 @@ def run_logger():
                             print(
                                 f"[{datetime.now()}] New Run {current_run_number} detected. Loading configuration...")
 
-                        # Close all existing monitor sockets gracefully before clearing
                         for mon in mon_list:
                             if mon['sock']:
                                 try:
@@ -243,7 +239,7 @@ def run_logger():
                                 if 'TCB' in name:
                                     continue
 
-                                # Store connection details, but defer connection to the polling loop
+                                # Store as dict to allow reconnecting without losing IP/Port info
                                 mon_list.append(
                                     {'name': name, 'ip': ip, 'port': port, 'sock': None})
                                 mon_names.append(name)
@@ -269,7 +265,6 @@ def run_logger():
                     try:
                         if not onlutils.send_command(daq_info_sock, onlconsts.kQUERYRUNINFO):
                             raise Exception("Send failed")
-
                         mess = []
                         if not onlutils.recv_message(daq_info_sock, mess) or not mess:
                             raise Exception("Recv failed")
@@ -286,20 +281,16 @@ def run_logger():
                             pass
                         daq_info_sock = None
 
-                # --- Polling Monitor Modules & Aggregating Data ---
-                # Safely aggregate triggers (n) and max time (t) by ADC type
-                db_updates = {
-                    'AADC': {'n': 0, 't': 0.0},
-                    'FADC': {'n': 0, 't': 0.0},
-                    'SADC': {'n': 0, 't': 0.0},
-                    'IADC': {'n': 0, 't': 0.0}
-                }
+                # --- Polling Monitor Modules & Database Query Building ---
+                update_query = "UPDATE runcatalog SET "
+                update_params = []
+                set_clauses = []
 
                 with data_lock:
                     for mon in mon_list:
                         name = mon['name']
 
-                        # Reconnect mechanism for dead sockets
+                        # [RISK 4 FIX] Auto-Reconnect mechanism for dead sockets
                         if mon['sock'] is None:
                             mon['sock'] = onlutils.get_connection(
                                 (mon['ip'], mon['port']))
@@ -317,14 +308,13 @@ def run_logger():
                                     except:
                                         pass
                                     mon['sock'] = None
-                                    continue
+                                    continue  # Skip to next module if connection failed
 
-                        # Polling data
+                        # Fetch Data if socket is alive
                         if mon['sock']:
                             try:
                                 if not onlutils.send_command(mon['sock'], onlconsts.kQUERYTRGINFO):
                                     raise Exception("Send failed")
-
                                 mess = []
                                 if not onlutils.recv_message(mon['sock'], mess) or not mess:
                                     raise Exception("Recv empty or failed")
@@ -343,15 +333,19 @@ def run_logger():
                                 run_stats[name]['dt'] = t
                                 run_stats[name]['dn'] = n
 
-                                # Accumulate values based on ADC type
-                                for adc_type in db_updates.keys():
-                                    if adc_type in name:
-                                        db_updates[adc_type]['n'] += n
-                                        db_updates[adc_type]['t'] = max(
-                                            db_updates[adc_type]['t'], t)
+                                # User confirmed 1 module per ADC type, so original logic is perfectly safe here
+                                if 'AADC' in name:
+                                    set_clauses.extend(["naadc=?", "taadc=?"])
+                                elif 'FADC' in name:
+                                    set_clauses.extend(["nfadc=?", "tfadc=?"])
+                                elif 'SADC' in name:
+                                    set_clauses.extend(["nsadc=?", "tsadc=?"])
+                                elif 'IADC' in name:
+                                    set_clauses.extend(["niadc=?", "tiadc=?"])
+                                update_params.extend([n, t])
 
                             except Exception:
-                                # Socket died during query. Mark for reconnection.
+                                # [RISK 4 FIX] Socket died during query. Mark for reconnection next tick.
                                 try:
                                     mon['sock'].close()
                                 except:
@@ -359,35 +353,20 @@ def run_logger():
                                 mon['sock'] = None
 
                 # --- Safe DB Execution ---
-                if onlutils.check_state(run_state, onlconsts.kRUNNING):
-                    update_query = "UPDATE runcatalog SET "
-                    update_params = []
-                    set_clauses = []
+                if set_clauses and onlutils.check_state(run_state, onlconsts.kRUNNING):
+                    update_query += ", ".join(set_clauses) + " WHERE runnum=?"
+                    update_params.append(current_run_number)
 
-                    # Construct query dynamically to avoid duplicate columns
-                    for adc_type, stats in db_updates.items():
-                        if stats['t'] > 0:
-                            set_clauses.extend(
-                                [f"n{adc_type.lower()}=?", f"t{adc_type.lower()}=?"])
-                            update_params.extend([stats['n'], stats['t']])
-
-                    if set_clauses:
-                        update_query += ", ".join(set_clauses) + \
-                            " WHERE runnum=?"
-                        update_params.append(current_run_number)
-
-                        try:
-                            with sqlite3.connect(onlconsts.kRUNCATALOGDBFILE) as conn:
-                                cursor = conn.cursor()
-                                cursor.execute(
-                                    update_query, tuple(update_params))
-                                conn.commit()
-                        except Exception as db_e:
-                            print(f"[{datetime.now()}] DB Update Error: {db_e}")
+                    try:
+                        with sqlite3.connect(onlconsts.kRUNCATALOGDBFILE) as conn:
+                            cursor = conn.cursor()
+                            cursor.execute(update_query, tuple(update_params))
+                            conn.commit()
+                    except Exception as db_e:
+                        pass  # Optional: Print DB error if needed
 
         except Exception as e:
-            # Prevent the daemon from crashing completely on unexpected outer errors
-            pass
+            pass  # Prevent daemon crash on unexpected outer errors
 
 
 if __name__ == '__main__':
