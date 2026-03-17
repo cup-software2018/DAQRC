@@ -128,12 +128,14 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             msg = '<font color="blue"><b>%s</b></font> loaded' % configfile
             self.ConfigFileLabel.setText(msg)
 
+
     def boot_run(self):
         self.check_and_start_logger()  # Re-check logger survival before booting
 
         self.Shift = str(self.ShiftConfig.text())
         if not self.Shift:
             return self.msgbox_error('Shift crew missing!')
+
         if not self.ConfigFile:
             return self.msgbox_error('Run configuration file missing!')
 
@@ -142,13 +144,15 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             return self.msgbox_error('Run type missing!')
 
         self.RunDesc = str(self.RunDescConfig.toPlainText())
-        configfile = os.path.basename(self.ConfigFile)
+        configfile_basename = os.path.basename(self.ConfigFile)
 
-        msg = f'<pre>Shift      : {self.Shift}<br>Run type   : {self.RunType}<br>Config file: {configfile}\n<br><b>Do you want to boot this run?</b></pre>'
+        # Confirm boot run
+        msg = f'<pre>Shift      : {self.Shift}<br>Run type   : {self.RunType}<br>Config file: {configfile_basename}\n<br><b>Do you want to boot this run?</b></pre>'
         reply = self.msgbox_question(msg)
         if reply.clickedButton() is reply.button(QMessageBox.No):
             return
 
+        # Clear UI and state variables
         self.RunStats.clear()
         self.MonNames.clear()
         self.SubRunNumber = 0
@@ -164,6 +168,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             "rundesc": self.RunDesc,
             "config": self.ConfigFile
         }
+
         resp = self.send_logger_cmd(req)
         if "run_num" in resp:
             self.RunNumber = resp["run_num"]
@@ -176,15 +181,62 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         rawdata_dir = onlconsts.kRAWDATA_DIR
 
         target_config = '%s/CONFIG/%06d.yml' % (rawdata_dir, run_number)
-        cmd = 'scp %s %s:%s' % (
-            config_file, onlconsts.kDAQSERVER_IP, target_config)
-        os.system(cmd)
+        merged_local_config = '/tmp/amore_run_%06d_merged.yml' % run_number
 
         daqlist = []
         try:
-            with open(config_file, 'r', encoding='utf-8') as fp:
-                config_data = yaml.safe_load(fp) or {}
+            # Helper function to recursively merge two dictionaries
+            def merge_dicts(base, update):
+                for key, val in update.items():
+                    if key in base:
+                        if isinstance(base[key], dict) and isinstance(val, dict):
+                            merge_dicts(base[key], val)
+                        elif isinstance(base[key], list) and isinstance(val, list):
+                            base[key].extend(val)
+                        else:
+                            base[key] = val
+                    else:
+                        base[key] = val
+                return base
 
+            # Load the main configuration file
+            with open(config_file, 'r', encoding='utf-8') as fp:
+                main_config = yaml.safe_load(fp) or {}
+
+            # Process 'Include' files if they exist
+            if 'Include' in main_config and isinstance(main_config['Include'], list):
+                config_dir = os.path.dirname(os.path.abspath(config_file))
+
+                for inc_file in main_config['Include']:
+                    # Resolve relative path
+                    if not os.path.isabs(inc_file):
+                        inc_file = os.path.join(config_dir, inc_file)
+
+                    with open(inc_file, 'r', encoding='utf-8') as inc_fp:
+                        inc_data = yaml.safe_load(inc_fp) or {}
+                        # Merge included data into the main configuration
+                        merge_dicts(main_config, inc_data)
+
+                # Remove the 'Include' node so the C++ DAQ doesn't process it again
+                del main_config['Include']
+
+            config_data = main_config
+
+            # Write the merged configuration to a temporary local file
+            with open(merged_local_config, 'w', encoding='utf-8') as out_fp:
+                yaml.dump(main_config, out_fp,
+                          default_flow_style=False, sort_keys=False)
+
+            # Send the merged file to the DAQ server
+            cmd = 'scp %s %s:%s' % (
+                merged_local_config, onlconsts.kDAQSERVER_IP, target_config)
+            os.system(cmd)
+
+            # Remove the temporary local file after sending
+            if os.path.exists(merged_local_config):
+                os.remove(merged_local_config)
+
+            # Extract DAQ server list from the merged configuration
             for item in config_data.get('DAQ', []):
                 dnum = int(item.get('ID', 0))
                 name = str(item.get('NAME', ''))
@@ -198,27 +250,30 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 else:
                     mode = 1
                 daqlist.append((mode, dnum, name, ip, port))
-        except Exception as e:
-            return self.msgbox_error('Failed to load YAML config:\n%s' % e)
 
+        except Exception as e:
+            return self.msgbox_error('Failed to load or merge YAML config:\n%s' % e)
+
+        # Build execution options for each DAQ component
         fformat = '-b' if onlconsts.kOUTPUTFILEFORMAT == 'hdf5' else '-a'
         optlist = []
         for daq in daqlist:
             mode, dnum, name, ip, port = daq
             topt = name[0].lower()
 
-            if mode == 0:
+            if mode == 0:    # TCB
                 sopt = '-t -r %d -n %s ' % (run_number, name)
                 dopt = '-d 0 -r %d -c %s' % (run_number, target_config)
-            elif mode == 2:
+            elif mode == 2:  # MERGER
                 sopt = '-m -r %d -n %s ' % (run_number, name)
                 dopt = '-%s -d %d -c %s -r %d ' % (topt,
                                                    dnum, target_config, run_number)
-            else:
+            else:            # ADCs
                 sopt = '-d -r %d -n %s ' % (run_number, name)
                 dopt = '-%s -d %d -c %s -r %d ' % (topt,
                                                    dnum, target_config, run_number)
                 adc = name[0:4]
+                # Check if this ADC requires a MERGER link
                 for dd in daqlist:
                     if dd[0] == 2 and adc in dd[2]:
                         dopt += '-x '
@@ -227,27 +282,30 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             dopt += ' ' + fformat + ' '
             optlist.append((mode, sopt, dopt, ip, port))
 
+        # Sort the execution list and ensure TCB (mode 0) is at the end
         optlist.sort(key=sortfunc)
         optlist.append(optlist.pop(0))
 
         onldaqdiropt = '--onldaqdir=%s ' % onldaq_dir
         rawdatadiropt = '--rawdatadir=%s ' % rawdata_dir
 
+        # Execute all DAQ processes except TCB
         for daq in optlist:
             mode = daq[0]
             if mode > 0:
-                cmd = self.Bindir + \
-                    '%s %s%s -o "%s"' % (onlconsts.kEXESCRIPT,
-                                         daq[1], onldaqdiropt+rawdatadiropt, daq[2])
+                cmd = self.Bindir + '%s %s%s -o "%s"' % (
+                    onlconsts.kEXESCRIPT, daq[1], onldaqdiropt + rawdatadiropt, daq[2])
                 onlutils.execute_cmd(cmd, daq[3])
+
         time.sleep(1)
 
+        # Execute TCB process last
         tcb = optlist[-1]
-        cmd = self.Bindir + \
-            '%s %s%s -o "%s"' % (onlconsts.kEXESCRIPT,
-                                 tcb[1], onldaqdiropt+rawdatadiropt, tcb[2])
+        cmd = self.Bindir + '%s %s%s -o "%s"' % (
+            onlconsts.kEXESCRIPT, tcb[1], onldaqdiropt + rawdatadiropt, tcb[2])
         onlutils.execute_cmd(cmd, tcb[3])
 
+        # Finalize state setup
         self.OnThisRC = True
         self.StartTime = 0
         self.EndTime = 0
