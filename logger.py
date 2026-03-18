@@ -3,7 +3,7 @@ import onlconsts
 from datetime import datetime
 import threading
 import json
-import socket
+import zmq
 import yaml
 import sqlite3
 import time
@@ -12,7 +12,6 @@ import os
 
 # Ensure the current directory is in the path to avoid ModuleNotFoundError when running via nohup
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 
 # Shared data in memory for real-time communication with RC
 shared_data = {
@@ -24,33 +23,25 @@ shared_data = {
 }
 data_lock = threading.Lock()
 
-# Automatically terminate logger if DAQ is DOWN for this many seconds (e.g., 3600s = 1 hour)
+# Automatically terminate logger if DAQ is DOWN for this many seconds
 IDLE_TIMEOUT_SEC = 3600
 
 
 def handle_rc_requests():
-    """Local server thread handling RC commands (DB insert, tag save, state query)"""
-    host = onlconsts.kLOGGERIPADDR
-    port = onlconsts.kLOGGERPORT
-
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind((host, port))
-    server.listen(5)
+    """
+    Local ZMQ REP server thread handling RC commands (DB insert, tag save, state query).
+    """
+    context = zmq.Context.instance()
+    sock = context.socket(zmq.REP)
+    sock.bind(f"tcp://*:{onlconsts.kLOGGERPORT}")
 
     while True:
         try:
-            conn, addr = server.accept()
-            data = conn.recv(8192).decode('utf-8')
-            if not data:
-                conn.close()
-                continue
-
-            request = json.loads(data)
+            request = sock.recv_json()
             cmd = request.get("cmd")
+            response = {"status": "error"}
 
-            # All DB accesses are safely executed in this single thread to prevent SQLite locks
-            with sqlite3.connect(onlconsts.kRUNCATALOGDBFILE) as db_conn:
+            with sqlite3.connect(onlconsts.kRUNCATALOGDBFILE, timeout=5.0) as db_conn:
                 db_conn.row_factory = sqlite3.Row
                 cursor = db_conn.cursor()
 
@@ -65,29 +56,20 @@ def handle_rc_requests():
                         (shift, runtype, rundesc, config)
                     )
                     db_conn.commit()
-                    conn.sendall(json.dumps(
-                        {"run_num": cursor.lastrowid}).encode('utf-8'))
+                    response = {"run_num": cursor.lastrowid}
 
                 elif cmd == "SYNC_LATEST":
                     cursor.execute(
                         "SELECT * FROM runcatalog ORDER BY runnum DESC LIMIT 1")
                     record = cursor.fetchone()
                     if record:
-                        resp = {
-                            "runnum": record['runnum'],
-                            "shift": record['shift'],
-                            "runtype": record['runtype'],
-                            "rundesc": record['rundesc'],
-                            "config": record['config']
-                        }
+                        response = dict(record)
                     else:
-                        resp = {}
-                    conn.sendall(json.dumps(resp).encode('utf-8'))
+                        response = {}
 
                 elif cmd == "GET_STATS":
                     with data_lock:
-                        resp = shared_data.copy()
-                    conn.sendall(json.dumps(resp).encode('utf-8'))
+                        response = shared_data.copy()
 
                 elif cmd == "TAG_GOODRUN":
                     run_num = request.get("run_num")
@@ -120,29 +102,29 @@ def handle_rc_requests():
 
                     cursor.execute(update_query, tuple(update_params))
                     db_conn.commit()
-                    conn.sendall(json.dumps({"status": "ok"}).encode('utf-8'))
+                    response = {"status": "ok"}
 
-            conn.close()
+            sock.send_json(response)
         except Exception as e:
-            if 'conn' in locals():
-                conn.close()
+            try:
+                sock.send_json({"status": "error", "message": str(e)})
+            except:
+                pass
 
 
 def run_logger():
-    """Monitor DAQ state and perform real-time DB logging at 1Hz using persistent sockets."""
+    """
+    Monitor DAQ state and perform real-time DB logging at 1Hz using ZMQ JSON.
+    """
     print(f"[{datetime.now()}] DAQ Logger daemon started.")
     last_run_number = -1
     last_run_state = -1
 
-    # mon_list stores connection info and states for dynamic reconnection
-    # Format: {'name': name, 'ip': ip, 'port': port, 'sock': socket_object}
     mon_list = []
     run_stats = {}
     mon_names = []
-
     last_active_time = time.time()
 
-    # Persistent sockets to prevent TIME_WAIT port exhaustion and memory leaks
     daq_state_sock = None
     daq_info_sock = None
 
@@ -150,138 +132,120 @@ def run_logger():
         time.sleep(1.0)
         current_time = time.time()
 
-        # 0. Check for idle timeout (Auto-termination)
         if current_time - last_active_time > IDLE_TIMEOUT_SEC:
             print(
                 f"[{datetime.now()}] Logger idle for {IDLE_TIMEOUT_SEC} seconds. Auto-terminating.")
             break
 
         try:
-            # --- 1. Query DAQ State (Using Persistent Connection) ---
+            # Query DAQ State
             if daq_state_sock is None:
                 daq_state_sock = onlutils.get_connection(
                     onlconsts.kDAQSERVER_ADDR)
-                if daq_state_sock:
-                    daq_state_sock.settimeout(2.0)
 
-            run_state = onlconsts.kDOWN
-            if daq_state_sock:
+            reply = onlutils.execute_command(
+                daq_state_sock, onlconsts.kQUERYDAQSTATUS)
+            if reply is None:
                 try:
-                    if not onlutils.send_command(daq_state_sock, onlconsts.kQUERYDAQSTATUS):
-                        raise Exception("Send failed")
-                    mess = []
-                    if not onlutils.recv_message(daq_state_sock, mess) or not mess:
-                        raise Exception("Recv failed")
-                    run_state = mess[0]
-                except Exception:
-                    try:
-                        daq_state_sock.close()
-                    except:
-                        pass
-                    daq_state_sock = None
+                    daq_state_sock.close()
+                except:
+                    pass
+                daq_state_sock = None
+                continue
 
-            # --- 2. Log state changes ---
+            run_state = reply.get("status", onlconsts.kDOWN)
+
             if run_state != last_run_state:
                 if onlutils.check_state(run_state, onlconsts.kRUNNING):
-                    print(
-                        f"[{datetime.now()}] DAQ State changed to RUNNING (Run Started).")
+                    print(f"[{datetime.now()}] DAQ State changed to RUNNING.")
                 elif onlutils.check_state(run_state, onlconsts.kRUNENDED):
-                    print(
-                        f"[{datetime.now()}] DAQ State changed to RUNENDED (Run Ended).")
+                    print(f"[{datetime.now()}] DAQ State changed to RUNENDED.")
                 elif onlutils.check_state(run_state, onlconsts.kDOWN):
                     print(f"[{datetime.now()}] DAQ State changed to DOWN.")
                 last_run_state = run_state
 
-            # --- 3. Reset idle timer if DAQ is not DOWN ---
             if not onlutils.check_state(run_state, onlconsts.kDOWN):
                 last_active_time = current_time
 
-            # --- 4. Handle monitoring and DB writing ---
+            # Handle monitoring and DB writing
             if onlutils.check_state(run_state, onlconsts.kRUNNING) or onlutils.check_state(run_state, onlconsts.kRUNENDED):
-                with sqlite3.connect(onlconsts.kRUNCATALOGDBFILE) as conn:
+                with sqlite3.connect(onlconsts.kRUNCATALOGDBFILE, timeout=5.0) as conn:
                     conn.row_factory = sqlite3.Row
                     cursor = conn.cursor()
                     cursor.execute(
                         "SELECT * FROM runcatalog ORDER BY runnum DESC LIMIT 1")
                     record = cursor.fetchone()
 
-                    if not record:
-                        continue
+                if not record:
+                    continue
 
-                    current_run_number = record['runnum']
-                    config_file = record['config']
+                current_run_number = record['runnum']
+                config_file = record['config']
 
-                    # --- New Run Initialization ---
-                    if current_run_number != last_run_number:
-                        if last_run_number != -1:
-                            print(
-                                f"[{datetime.now()}] New Run {current_run_number} detected. Loading configuration...")
+                # New Run Initialization
+                if current_run_number != last_run_number:
+                    if last_run_number != -1:
+                        print(
+                            f"[{datetime.now()}] New Run {current_run_number} detected.")
 
-                        for mon in mon_list:
-                            if mon['sock']:
-                                try:
-                                    mon['sock'].close()
-                                except:
-                                    pass
+                    for mon in mon_list:
+                        if mon['sock']:
+                            try:
+                                mon['sock'].close()
+                            except:
+                                pass
 
-                        mon_list.clear()
-                        run_stats.clear()
-                        mon_names.clear()
+                    mon_list.clear()
+                    run_stats.clear()
+                    mon_names.clear()
 
-                        if os.path.isfile(config_file):
-                            with open(config_file, 'r', encoding='utf-8') as fp:
-                                config_data = yaml.safe_load(fp) or {}
+                    if os.path.isfile(config_file):
+                        with open(config_file, 'r', encoding='utf-8') as fp:
+                            config_data = yaml.safe_load(fp) or {}
 
-                            for item in config_data.get('DAQ', []):
-                                name = str(item.get('NAME', ''))
-                                ip = str(item.get('IP', ''))
-                                port = int(item.get('PORT', 0))
-                                if 'TCB' in name:
-                                    continue
+                        for item in config_data.get('DAQ', []):
+                            name = str(item.get('NAME', ''))
+                            ip = str(item.get('IP', ''))
+                            port = int(item.get('PORT', 0))
+                            if 'TCB' in name:
+                                continue
 
-                                # Store as dict to allow reconnecting without losing IP/Port info
-                                mon_list.append(
-                                    {'name': name, 'ip': ip, 'port': port, 'sock': None})
-                                mon_names.append(name)
-                                run_stats[name] = {
-                                    'n': 0, 'dn': 0, 't': 0.0, 'dt': 0.0, 'ar': 0.0, 'sr': 0.0}
+                            mon_list.append(
+                                {'name': name, 'ip': ip, 'port': port, 'sock': None})
+                            mon_names.append(name)
+                            run_stats[name] = {
+                                'n': 0, 'dn': 0, 't': 0.0, 'dt': 0.0, 'ar': 0.0, 'sr': 0.0}
 
-                        with data_lock:
-                            shared_data['MonNames'] = mon_names
-                            shared_data['RunStats'] = run_stats
-                            shared_data['StartTime'] = 0
-                            shared_data['EndTime'] = 0
-                            shared_data['SubRunNumber'] = 0
-                        last_run_number = current_run_number
+                    with data_lock:
+                        shared_data['MonNames'] = mon_names
+                        shared_data['RunStats'] = run_stats
+                        shared_data['StartTime'] = 0
+                        shared_data['EndTime'] = 0
+                        shared_data['SubRunNumber'] = 0
+                    last_run_number = current_run_number
 
-                # --- Query DAQ Info (Using Persistent Connection) ---
+                # Query DAQ Info
                 if daq_info_sock is None:
                     daq_info_sock = onlutils.get_connection(
                         onlconsts.kDAQSERVER_ADDR)
-                    if daq_info_sock:
-                        daq_info_sock.settimeout(2.0)
 
-                if daq_info_sock:
+                info_reply = onlutils.execute_command(
+                    daq_info_sock, onlconsts.kQUERYRUNINFO)
+                if info_reply:
+                    with data_lock:
+                        shared_data['SubRunNumber'] = info_reply.get(
+                            "subrun", 0)
+                        shared_data['StartTime'] = info_reply.get(
+                            "starttime", 0)
+                        shared_data['EndTime'] = info_reply.get("endtime", 0)
+                else:
                     try:
-                        if not onlutils.send_command(daq_info_sock, onlconsts.kQUERYRUNINFO):
-                            raise Exception("Send failed")
-                        mess = []
-                        if not onlutils.recv_message(daq_info_sock, mess) or not mess:
-                            raise Exception("Recv failed")
+                        daq_info_sock.close()
+                    except:
+                        pass
+                    daq_info_sock = None
 
-                        with data_lock:
-                            shared_data['SubRunNumber'] = mess[1]
-                            shared_data['StartTime'] = mess[2]
-                            shared_data['EndTime'] = mess[3] if len(
-                                mess) > 3 else 0
-                    except Exception:
-                        try:
-                            daq_info_sock.close()
-                        except:
-                            pass
-                        daq_info_sock = None
-
-                # --- Polling Monitor Modules & Database Query Building ---
+                # Polling Monitor Modules
                 update_query = "UPDATE runcatalog SET "
                 update_params = []
                 set_clauses = []
@@ -290,38 +254,26 @@ def run_logger():
                     for mon in mon_list:
                         name = mon['name']
 
-                        # [RISK 4 FIX] Auto-Reconnect mechanism for dead sockets
                         if mon['sock'] is None:
-                            mon['sock'] = onlutils.get_connection(
-                                (mon['ip'], mon['port']))
-                            if mon['sock']:
-                                mon['sock'].settimeout(2.0)
-                                try:
-                                    onlutils.send_command(
-                                        mon['sock'], onlconsts.kQUERYMONITOR)
-                                    init_mess = []
-                                    onlutils.recv_message(
-                                        mon['sock'], init_mess)
-                                except Exception:
-                                    try:
-                                        mon['sock'].close()
-                                    except:
-                                        pass
-                                    mon['sock'] = None
-                                    continue  # Skip to next module if connection failed
+                            endpoint = f"tcp://{mon['ip']}:{mon['port']}"
+                            mon['sock'] = onlutils.get_connection(endpoint)
+                            # Assuming kQUERYMONITOR initializes the module
+                            onlutils.execute_command(
+                                mon['sock'], onlconsts.kQUERYMONITOR)
 
-                        # Fetch Data if socket is alive
                         if mon['sock']:
                             try:
-                                if not onlutils.send_command(mon['sock'], onlconsts.kQUERYTRGINFO):
-                                    raise Exception("Send failed")
-                                mess = []
-                                if not onlutils.recv_message(mon['sock'], mess) or not mess:
-                                    raise Exception("Recv empty or failed")
+                                trg_info = onlutils.execute_command(
+                                    mon['sock'], onlconsts.kQUERYTRGINFO)
+                                if trg_info is None:
+                                    raise Exception("Recv empty")
 
-                                n = run_stats[name]['n'] = mess[0]
-                                t = run_stats[name]['t'] = mess[1] / \
-                                    1000000000.
+                                # Adapting to JSON structure, assuming keys "events" or "n" and "time" or "t"
+                                n = run_stats[name]['n'] = trg_info.get(
+                                    "events", trg_info.get("n", 0))
+                                t_ns = trg_info.get(
+                                    "time", trg_info.get("t", 0))
+                                t = run_stats[name]['t'] = t_ns / 1000000000.0
 
                                 if t > 0:
                                     run_stats[name]['ar'] = n / t
@@ -333,7 +285,6 @@ def run_logger():
                                 run_stats[name]['dt'] = t
                                 run_stats[name]['dn'] = n
 
-                                # User confirmed 1 module per ADC type, so original logic is perfectly safe here
                                 if 'AADC' in name:
                                     set_clauses.extend(["naadc=?", "taadc=?"])
                                 elif 'FADC' in name:
@@ -345,28 +296,26 @@ def run_logger():
                                 update_params.extend([n, t])
 
                             except Exception:
-                                # [RISK 4 FIX] Socket died during query. Mark for reconnection next tick.
                                 try:
                                     mon['sock'].close()
                                 except:
                                     pass
                                 mon['sock'] = None
 
-                # --- Safe DB Execution ---
+                # Safe DB Execution
                 if set_clauses and onlutils.check_state(run_state, onlconsts.kRUNNING):
                     update_query += ", ".join(set_clauses) + " WHERE runnum=?"
                     update_params.append(current_run_number)
-
                     try:
-                        with sqlite3.connect(onlconsts.kRUNCATALOGDBFILE) as conn:
+                        with sqlite3.connect(onlconsts.kRUNCATALOGDBFILE, timeout=5.0) as conn:
                             cursor = conn.cursor()
                             cursor.execute(update_query, tuple(update_params))
                             conn.commit()
                     except Exception as db_e:
-                        pass  # Optional: Print DB error if needed
+                        pass
 
         except Exception as e:
-            pass  # Prevent daemon crash on unexpected outer errors
+            pass
 
 
 if __name__ == '__main__':

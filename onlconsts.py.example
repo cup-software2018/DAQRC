@@ -1,44 +1,50 @@
-#
-# DAQ Server where tcb is supposed to be runnig
-#
-kDAQSERVER_IP = ''
-kDAQSERVER_PORT =
-kDAQSERVER_ADDR = (kDAQSERVER_IP, kDAQSERVER_PORT)
 
-# if RC is running on same server with DAQ
+#
+# DAQ Server where tcb is supposed to be running
+#
+kDAQSERVER_IP = ''     # Update with actual DAQ IP
+kDAQSERVER_PORT =      # Update with actual DAQ Port
+kDAQSERVER_ADDR = 'tcp://%s:%d' % (kDAQSERVER_IP, kDAQSERVER_PORT)
+
+
+
+# If RC is running on same server with DAQ
 kISREMOTEDAQ = False
 
-# kONLDAQ_DIR and kRAWDATA_DIR at DAQ server, kRAWDATA_DIR should have RAW, LOG, and CONFIG directories
-kONLDAQ_DIR = ''
-kRAWDATA_DIR = ''
+# Directories at DAQ server
+kONLDAQ_DIR = '/opt/cupdaq'  # Set to actual directory
+kRAWDATA_DIR = '/data'       # Set to actual directory
 
-# run catalog db file should be in same server with RC
-kRUNCATALOGDBFILE = ''
-kDEFAULTCONFIGDIR = ''
+# Run catalog db file should be in same server with RC
+kRUNCATALOGDBFILE = 'runcatalog.db'
+kDEFAULTCONFIGDIR = './config'
 
-#
-# Add more run type
-#
+# Add more run types
 kRUNTYPELIST = ['', 'physics', 'calibration', 'test']
 
 kOUTPUTFILEFORMAT = 'hdf5' # hdf5 or root
 
 # ===========================================================
-#
 # Do not modify from here!!!
-#
+# ===========================================================
+
+# Logger ZMQ Server Address
+kLOGGERIPADDR = '127.0.0.1'
+kLOGGERPORT = 9999
+kLOGGER_ADDR = 'tcp://%s:%d' % (kLOGGERIPADDR, kLOGGERPORT)
+
 kEXESCRIPT = 'executedaq.sh'
 kMESSLEN = 32
 
-# Commands
-kCONFIGRUN = 1
-kSTARTRUN = 2
-kENDRUN = 3
-kEXIT = 4
-kQUERYDAQSTATUS = 10
-kQUERYRUNINFO = 12
-kQUERYTRGINFO = 14
-kQUERYMONITOR = 21
+# Commands (Updated for JSON payload)
+kCONFIGRUN = "kCONFIGRUN"
+kSTARTRUN = "kSTARTRUN"
+kENDRUN = "kENDRUN"
+kEXIT = "kEXIT"
+kQUERYDAQSTATUS = "kQUERYDAQSTATUS"
+kQUERYRUNINFO = "kQUERYRUNINFO"
+kQUERYTRGINFO = "kQUERYTRGINFO"
+kQUERYMONITOR = "kQUERYMONITOR"
 
 # RUN Status
 kDOWN = 0
@@ -51,7 +57,4 @@ kWARNING = 6
 kERROR = 7
 
 kDAQSTATE = ['Down', 'Booted', 'Configured',
-             'Running', 'RunEnd', 'RunEnd', '', 'Error']
-
-kLOGGERIPADDR = 'localhost'
-kLOGGERPORT = 9999
+             'Running', 'RunEnd', 'ProcEnd', 'Warning', 'Error']
