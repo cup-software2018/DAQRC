@@ -441,8 +441,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 if not self.EndTime:
                     reply = onlutils.send_daq_cmd(
                         self.RunSocket, onlconsts.kQUERYRUNINFO)
-                    if reply and "endtime" in reply:
-                        self.EndTime = reply["endtime"]
+                    if reply and "end_time" in reply:
+                        self.EndTime = reply["end_time"]
 
                 onlbit = 0
                 msg = 'Tag run %06d as GOODRUN?' % self.RunNumber

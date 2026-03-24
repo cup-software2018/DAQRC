@@ -248,11 +248,12 @@ def run_logger():
                     daq_info_sock, onlconsts.kQUERYRUNINFO)
                 if info_reply:
                     with data_lock:
+                        # Modified JSON keys to match C++ output exactly
                         shared_data['SubRunNumber'] = info_reply.get(
-                            "subrun", 0)
+                            "subrun_number", 0)
                         shared_data['StartTime'] = info_reply.get(
-                            "starttime", 0)
-                        shared_data['EndTime'] = info_reply.get("endtime", 0)
+                            "start_time", 0)
+                        shared_data['EndTime'] = info_reply.get("end_time", 0)
                 else:
                     try:
                         daq_info_sock.close()
@@ -287,11 +288,10 @@ def run_logger():
                                         "Module %s TrgInfo timeout!", name)
                                     raise Exception("Recv empty")
 
-                                # Adapting to JSON structure, assuming keys "events" or "n" and "time" or "t"
+                                # Modified JSON keys to match C++ TF_MsgServer output exactly
                                 n = run_stats[name]['n'] = trg_info.get(
-                                    "events", trg_info.get("n", 0))
-                                t_ns = trg_info.get(
-                                    "time", trg_info.get("t", 0))
+                                    "nevent", 0)
+                                t_ns = trg_info.get("trgtime", 0)
                                 t = run_stats[name]['t'] = t_ns / 1000000000.0
 
                                 if t > 0:
