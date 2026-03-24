@@ -13,6 +13,9 @@ import os
 # Ensure the current directory is in the path to avoid ModuleNotFoundError when running via nohup
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
+# Initialize the LOGGER daemon logger (saves to /tmp/cupdaq_logger_daemon.log)
+log = onlutils.get_logger("LOGGER", "/tmp/cupdaq_logger_daemon.log")
+
 # Shared data in memory for real-time communication with RC
 shared_data = {
     "RunStats": {},
@@ -35,10 +38,18 @@ def handle_rc_requests():
     sock = context.socket(zmq.REP)
     sock.bind(f"tcp://*:{onlconsts.kLOGGERPORT}")
 
+    log.info("RC Request Handler (ZMQ REP) started on port %d",
+             onlconsts.kLOGGERPORT)
+
     while True:
         try:
             request = sock.recv_json()
             cmd = request.get("cmd")
+
+            # Avoid logging GET_STATS as it arrives at 1Hz and would spam the logs
+            if cmd != "GET_STATS":
+                log.debug("Received CMD from RC: %s", cmd)
+
             response = {"status": "error"}
 
             with sqlite3.connect(onlconsts.kRUNCATALOGDBFILE, timeout=5.0) as db_conn:
@@ -57,6 +68,8 @@ def handle_rc_requests():
                     )
                     db_conn.commit()
                     response = {"run_num": cursor.lastrowid}
+                    log.info(
+                        "BOOT_RUN processed successfully. Assigned Run Number: %d", response["run_num"])
 
                 elif cmd == "SYNC_LATEST":
                     cursor.execute(
@@ -76,6 +89,9 @@ def handle_rc_requests():
                     onlbit = request.get("onlbit")
                     stime_str = request.get("stime_str")
                     etime_str = request.get("etime_str")
+
+                    log.info("Tagging RunNum %s as GOODRUN: %s",
+                             run_num, bool(onlbit))
 
                     update_query = "UPDATE runcatalog SET stime=?, etime=?, onlbit=?"
                     update_params = [stime_str, etime_str, onlbit]
@@ -106,6 +122,7 @@ def handle_rc_requests():
 
             sock.send_json(response)
         except Exception as e:
+            log.error("Exception in handle_rc_requests: %s", e, exc_info=True)
             try:
                 sock.send_json({"status": "error", "message": str(e)})
             except:
@@ -116,7 +133,7 @@ def run_logger():
     """
     Monitor DAQ state and perform real-time DB logging at 1Hz using ZMQ JSON.
     """
-    print(f"[{datetime.now()}] DAQ Logger daemon started.")
+    log.info("DAQ Logger daemon main loop started.")
     last_run_number = -1
     last_run_state = -1
 
@@ -133,19 +150,21 @@ def run_logger():
         current_time = time.time()
 
         if current_time - last_active_time > IDLE_TIMEOUT_SEC:
-            print(
-                f"[{datetime.now()}] Logger idle for {IDLE_TIMEOUT_SEC} seconds. Auto-terminating.")
+            log.warning(
+                "Logger idle for %d seconds. Auto-terminating.", IDLE_TIMEOUT_SEC)
             break
 
         try:
-            # Query DAQ State
+            # 1. Query DAQ State
             if daq_state_sock is None:
                 daq_state_sock = onlutils.get_connection(
                     onlconsts.kDAQSERVER_ADDR)
 
             reply = onlutils.send_daq_cmd(
                 daq_state_sock, onlconsts.kQUERYDAQSTATUS)
+
             if reply is None:
+                log.debug("DAQ State Reply is None (Timeout/Disconnected).")
                 try:
                     daq_state_sock.close()
                 except:
@@ -153,21 +172,17 @@ def run_logger():
                 daq_state_sock = None
                 continue
 
-            run_state = reply.get("status", onlconsts.kDOWN)
+            run_state = reply.get("run_status", onlconsts.kDOWN)
 
             if run_state != last_run_state:
-                if onlutils.check_state(run_state, onlconsts.kRUNNING):
-                    print(f"[{datetime.now()}] DAQ State changed to RUNNING.")
-                elif onlutils.check_state(run_state, onlconsts.kRUNENDED):
-                    print(f"[{datetime.now()}] DAQ State changed to RUNENDED.")
-                elif onlutils.check_state(run_state, onlconsts.kDOWN):
-                    print(f"[{datetime.now()}] DAQ State changed to DOWN.")
+                log.info("DAQ State changed: %s -> %s",
+                         last_run_state, run_state)
                 last_run_state = run_state
 
             if not onlutils.check_state(run_state, onlconsts.kDOWN):
                 last_active_time = current_time
 
-            # Handle monitoring and DB writing
+            # 2. Handle monitoring and DB writing
             if onlutils.check_state(run_state, onlconsts.kRUNNING) or onlutils.check_state(run_state, onlconsts.kRUNENDED):
                 with sqlite3.connect(onlconsts.kRUNCATALOGDBFILE, timeout=5.0) as conn:
                     conn.row_factory = sqlite3.Row
@@ -185,8 +200,8 @@ def run_logger():
                 # New Run Initialization
                 if current_run_number != last_run_number:
                     if last_run_number != -1:
-                        print(
-                            f"[{datetime.now()}] New Run {current_run_number} detected.")
+                        log.info(
+                            "New Run %d detected. Re-initializing monitoring modules.", current_run_number)
 
                     for mon in mon_list:
                         if mon['sock']:
@@ -224,7 +239,7 @@ def run_logger():
                         shared_data['SubRunNumber'] = 0
                     last_run_number = current_run_number
 
-                # Query DAQ Info
+                # 3. Query DAQ Info
                 if daq_info_sock is None:
                     daq_info_sock = onlutils.get_connection(
                         onlconsts.kDAQSERVER_ADDR)
@@ -245,7 +260,7 @@ def run_logger():
                         pass
                     daq_info_sock = None
 
-                # Polling Monitor Modules
+                # 4. Polling Monitor Modules
                 update_query = "UPDATE runcatalog SET "
                 update_params = []
                 set_clauses = []
@@ -256,6 +271,8 @@ def run_logger():
 
                         if mon['sock'] is None:
                             endpoint = f"tcp://{mon['ip']}:{mon['port']}"
+                            log.debug(
+                                "Connecting to monitoring module %s at %s", name, endpoint)
                             mon['sock'] = onlutils.get_connection(endpoint)
                             # Assuming kQUERYMONITOR initializes the module
                             onlutils.send_daq_cmd(
@@ -266,6 +283,8 @@ def run_logger():
                                 trg_info = onlutils.send_daq_cmd(
                                     mon['sock'], onlconsts.kQUERYTRGINFO)
                                 if trg_info is None:
+                                    log.warning(
+                                        "Module %s TrgInfo timeout!", name)
                                     raise Exception("Recv empty")
 
                                 # Adapting to JSON structure, assuming keys "events" or "n" and "time" or "t"
@@ -295,14 +314,16 @@ def run_logger():
                                     set_clauses.extend(["niadc=?", "tiadc=?"])
                                 update_params.extend([n, t])
 
-                            except Exception:
+                            except Exception as module_e:
+                                log.error(
+                                    "Polling module %s failed: %s", name, module_e)
                                 try:
                                     mon['sock'].close()
                                 except:
                                     pass
                                 mon['sock'] = None
 
-                # Safe DB Execution
+                # 5. Safe DB Execution
                 if set_clauses and onlutils.check_state(run_state, onlconsts.kRUNNING):
                     update_query += ", ".join(set_clauses) + " WHERE runnum=?"
                     update_params.append(current_run_number)
@@ -312,10 +333,12 @@ def run_logger():
                             cursor.execute(update_query, tuple(update_params))
                             conn.commit()
                     except Exception as db_e:
-                        pass
+                        log.error(
+                            "DB UPDATE failed in polling loop: %s", db_e, exc_info=True)
 
-        except Exception as e:
-            pass
+        except Exception as global_e:
+            log.critical("Logger Main Loop Crashed: %s",
+                         global_e, exc_info=True)
 
 
 if __name__ == '__main__':

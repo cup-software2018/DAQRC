@@ -11,6 +11,9 @@ from rcui import Ui_MainWindow
 import onlconsts
 import onlutils
 
+# Initialize the RC logger (saves to /tmp/cupdaq_rc.log)
+log = onlutils.get_logger("RC", "/tmp/cupdaq_rc.log")
+
 
 def sortfunc(e):
     # Ensure TCB(mode=0) gets sorted to the front before moving to the end
@@ -65,6 +68,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         # ZMQ persistent socket for logger
         self.LoggerSocket = None
 
+        log.info("Starting Run Control GUI...")
+
         # Launch the background logger daemon if it's dead when RC starts
         self.check_and_start_logger()
 
@@ -81,17 +86,18 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         reply = self.send_logger_cmd({"cmd": "PING"})
 
         if not reply:
-            print("Logger daemon is not responding. Starting logger.py in background...")
+            log.warning(
+                "Logger daemon is not responding. Starting logger.py in background...")
             logger_script = os.path.join(os.path.dirname(
                 os.path.abspath(__file__)), 'logger.py')
-            log_file = '/tmp/cupdaq_logger.log'
+            log_file = '/tmp/cupdaq_logger_daemon.log'
             python_exe = sys.executable if sys.executable else 'python'
             start_cmd = f"nohup {python_exe} {logger_script} > {log_file} 2>&1 &"
             os.system(start_cmd)
             time.sleep(1.0)
         else:
-            print("Logger daemon is already running on port %d." %
-                  onlconsts.kLOGGERPORT)
+            log.info("Logger daemon is already running on port %d.",
+                     onlconsts.kLOGGERPORT)
 
     def send_logger_cmd(self, req_data):
         """
@@ -105,8 +111,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         reply = onlutils.send_daq_cmd(self.LoggerSocket, cmd, req_data)
 
         if reply is None:
-            print(
-                f"[{datetime.now().strftime('%H:%M:%S')}] Logger timeout on {cmd}. Resetting socket.")
+            log.error("Logger timeout on command '%s'. Resetting socket.", cmd)
             self.LoggerSocket.close()
             self.LoggerSocket = None
             return {}
@@ -121,8 +126,10 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             configfile = os.path.basename(self.ConfigFile)
             msg = '<font color="blue"><b>%s</b></font> loaded' % configfile
             self.ConfigFileLabel.setText(msg)
+            log.info("Loaded configuration file: %s", self.ConfigFile)
 
     def boot_run(self):
+        log.info("Initiating BOOT_RUN sequence...")
         self.check_and_start_logger()
 
         self.Shift = str(self.ShiftConfig.text())
@@ -142,6 +149,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         msg = f'<pre>Shift      : {self.Shift}<br>Run type   : {self.RunType}<br>Config file: {configfile_basename}\n<br><b>Do you want to boot this run?</b></pre>'
         reply = self.msgbox_question(msg)
         if reply.clickedButton() is reply.button(QMessageBox.No):
+            log.info("BOOT_RUN cancelled by user.")
             return
 
         self.RunStats.clear()
@@ -162,7 +170,10 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         resp = self.send_logger_cmd(req)
         if "run_num" in resp:
             self.RunNumber = resp["run_num"]
+            log.info("BOOT_RUN successful. Assigned Run Number: %06d",
+                     self.RunNumber)
         else:
+            log.error("Logger failed to boot run (DB error). Response: %s", resp)
             return self.msgbox_error("Logger failed to boot run (DB error).")
 
         run_number = self.RunNumber
@@ -210,6 +221,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             cmd = 'scp %s %s:%s' % (
                 merged_local_config, onlconsts.kDAQSERVER_IP, target_config)
             os.system(cmd)
+            log.debug("Merged config SCP copied to target: %s", target_config)
 
             if os.path.exists(merged_local_config):
                 os.remove(merged_local_config)
@@ -229,6 +241,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 daqlist.append((mode, dnum, name, ip, port))
 
         except Exception as e:
+            log.error("Failed to load or merge YAML config: %s",
+                      e, exc_info=True)
             return self.msgbox_error('Failed to load or merge YAML config:\n%s' % e)
 
         fformat = '-b' if getattr(onlconsts,
@@ -270,6 +284,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 cmd = self.Bindir + \
                     '%s %s%s -o "%s"' % (onlconsts.kEXESCRIPT,
                                          daq[1], onldaqdiropt + rawdatadiropt, daq[2])
+                log.info(
+                    "Executing remote command via SSH on %s: %s", daq[3], cmd)
                 onlutils.run_ssh_cmd(cmd, daq[3])
 
         time.sleep(1)
@@ -278,17 +294,21 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         cmd = self.Bindir + \
             '%s %s%s -o "%s"' % (onlconsts.kEXESCRIPT,
                                  tcb[1], onldaqdiropt + rawdatadiropt, tcb[2])
+        log.info("Executing TCB remote command via SSH on %s: %s", tcb[3], cmd)
         onlutils.run_ssh_cmd(cmd, tcb[3])
 
         self.OnThisRC = True
         self.StartTime = 0
         self.EndTime = 0
+        log.info("Boot sequence completed.")
 
     def config_run(self):
+        log.info("User requested CONFIG_RUN.")
         onlutils.send_daq_cmd(self.RunSocket, onlconsts.kCONFIGRUN)
         self.ConfigButton.setStyleSheet("background-color: yellow")
 
     def start_run(self):
+        log.info("User requested START_RUN.")
         onlutils.send_daq_cmd(self.RunSocket, onlconsts.kSTARTRUN)
         self.StartButton.setStyleSheet("background-color: yellow")
 
@@ -298,6 +318,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         if reply.clickedButton() is reply.button(QMessageBox.No):
             return
 
+        log.info("User requested END_RUN.")
         onlutils.send_daq_cmd(self.RunSocket, onlconsts.kENDRUN)
         self.EndButton.setStyleSheet("background-color: yellow")
 
@@ -318,12 +339,26 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             if reply.clickedButton() is reply.button(QMessageBox.No):
                 return
 
+        log.warning("User requested FORCE EXIT.")
         if self.RunSocket:
             onlutils.send_daq_cmd(self.RunSocket, onlconsts.kEXIT)
 
     def update_runstate(self):
+        old_state = self.RunState
         self.RunState, self.RunSocket = onlutils.query_runstate(
             self.daq_endpoint, self.RunSocket)
+
+        # Log only when the state changes to avoid log spamming every 500ms
+        if old_state != self.RunState:
+            raw_val = onlutils.get_state(self.RunState)
+            state_str = onlconsts.kDAQSTATE[raw_val] if raw_val < len(
+                onlconsts.kDAQSTATE) else "UNKNOWN"
+            log.info("DAQ State changed: %s (Raw value: %s)",
+                     state_str, self.RunState)
+
+            if onlutils.check_error(self.RunState):
+                log.error("DAQ has entered ERROR state!")
+
         self.set_runstate(self.RunState)
 
         if not self.OnThisRC and self.RunState != onlconsts.kDOWN:
@@ -345,6 +380,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 self.ConfigFileLabel.setText(
                     '<font color="blue"><b>%s</b></font> loaded' % configfile)
                 self.OnThisRC = True
+                log.info(
+                    "Synced latest run details from logger: RunNum %06d", self.RunNumber)
 
         if onlutils.check_state(self.RunState, onlconsts.kRUNNING) or onlutils.check_state(self.RunState, onlconsts.kRUNENDED):
             resp = self.send_logger_cmd({"cmd": "GET_STATS"})
@@ -370,6 +407,9 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 reply = self.msgbox_question(msg)
                 if reply.clickedButton() is reply.button(QMessageBox.Yes):
                     onlbit = 1
+                    log.info("Run %06d tagged as GOODRUN.", self.RunNumber)
+                else:
+                    log.info("Run %06d NOT tagged as GOODRUN.", self.RunNumber)
 
                 stime_str = datetime.fromtimestamp(self.StartTime).strftime(
                     "%Y-%m-%d %H:%M:%S") if self.StartTime else ""
@@ -494,6 +534,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.move(qr.topLeft())
 
     def msgbox_error(self, message):
+        log.error("GUI Error MessageBox triggered: %s", message)
         font = QFont()
         font.setPointSize(12)
         box = QMessageBox()
