@@ -14,7 +14,7 @@ _ctx = zmq.Context.instance()
 def get_logger(name, log_file=None):
     """
     Creates and configures a standard Python logger.
-    Supports both terminal output and file saving simultaneously.
+    Logs are saved to a file (and routed to GUI in rc.py). Terminal output is disabled.
     """
     logger = logging.getLogger(name)
 
@@ -22,19 +22,13 @@ def get_logger(name, log_file=None):
     if not logger.handlers:
         logger.setLevel(logging.DEBUG)
 
-        # Format: [YYYY-MM-DD HH:MM:SS] [MODULE_NAME] [LOG_LEVEL] Message (Seconds only)
+        # Format: [YYYY-MM-DD HH:MM:SS] [MODULE_NAME] [LOG_LEVEL] Message
         formatter = logging.Formatter(
             '[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
 
-        # 1. Console Handler (for terminal output)
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(logging.DEBUG)
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
-
-        # 2. File Handler (for saving to file, max 5MB per file with 3 backups)
+        # File Handler (for saving to file, max 5MB per file with 3 backups)
         if log_file:
             file_handler = RotatingFileHandler(
                 log_file, maxBytes=5*1024*1024, backupCount=3)
@@ -120,7 +114,7 @@ def send_daq_cmd(sock, cmd_string, extra_data=None, timeout_ms=200):
         # Timeout check
         if sock.poll(timeout=timeout_ms) == 0:
             # Keep it at the DEBUG level since frequent polling timeouts can spam the logs.
-            #log.debug("ZMQ poll timeout (%d ms) on command: %s",
+            # log.debug("ZMQ poll timeout (%d ms) on command: %s",
             #          timeout_ms, cmd_string)
             return None
 
