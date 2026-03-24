@@ -44,11 +44,11 @@ for item in nodes:
 
     # Execute remote kill command via SSH
     if 'TCB' in name:
-        onlutils.execute_cmd(cmd % 'tcb', ip)
+        onlutils.run_ssh_cmd(cmd % 'tcb', ip)
     elif 'MERGER' in name:
-        onlutils.execute_cmd(cmd % 'merger', ip)
+        onlutils.run_ssh_cmd(cmd % 'merger', ip)
     else:
         # Default to killing 'daq' for AADC, FADC, SADC, IADC, etc.
-        onlutils.execute_cmd(cmd % 'daq', ip)
+        onlutils.run_ssh_cmd(cmd % 'daq', ip)
 
 print("Kill command dispatched successfully for run %06d." % runnum)

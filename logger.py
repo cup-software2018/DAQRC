@@ -143,7 +143,7 @@ def run_logger():
                 daq_state_sock = onlutils.get_connection(
                     onlconsts.kDAQSERVER_ADDR)
 
-            reply = onlutils.execute_command(
+            reply = onlutils.send_daq_cmd(
                 daq_state_sock, onlconsts.kQUERYDAQSTATUS)
             if reply is None:
                 try:
@@ -229,7 +229,7 @@ def run_logger():
                     daq_info_sock = onlutils.get_connection(
                         onlconsts.kDAQSERVER_ADDR)
 
-                info_reply = onlutils.execute_command(
+                info_reply = onlutils.send_daq_cmd(
                     daq_info_sock, onlconsts.kQUERYRUNINFO)
                 if info_reply:
                     with data_lock:
@@ -258,12 +258,12 @@ def run_logger():
                             endpoint = f"tcp://{mon['ip']}:{mon['port']}"
                             mon['sock'] = onlutils.get_connection(endpoint)
                             # Assuming kQUERYMONITOR initializes the module
-                            onlutils.execute_command(
+                            onlutils.send_daq_cmd(
                                 mon['sock'], onlconsts.kQUERYMONITOR)
 
                         if mon['sock']:
                             try:
-                                trg_info = onlutils.execute_command(
+                                trg_info = onlutils.send_daq_cmd(
                                     mon['sock'], onlconsts.kQUERYTRGINFO)
                                 if trg_info is None:
                                     raise Exception("Recv empty")

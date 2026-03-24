@@ -24,9 +24,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
         self.Bindir = onlconsts.kONLDAQ_DIR + '/bin/'
 
-        # Launch the background logger daemon if it's dead when RC starts
-        self.check_and_start_logger()
-
         self.RunNumber = 0
         self.Shift = None
         self.RunType = None
@@ -105,7 +102,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             self.LoggerSocket = onlutils.get_connection(onlconsts.kLOGGER_ADDR)
 
         cmd = req_data.get("cmd")
-        reply = onlutils.execute_command(self.LoggerSocket, cmd, req_data)
+        reply = onlutils.send_daq_cmd(self.LoggerSocket, cmd, req_data)
 
         if reply is None:
             print(
@@ -273,7 +270,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 cmd = self.Bindir + \
                     '%s %s%s -o "%s"' % (onlconsts.kEXESCRIPT,
                                          daq[1], onldaqdiropt + rawdatadiropt, daq[2])
-                onlutils.execute_cmd(cmd, daq[3])
+                onlutils.run_ssh_cmd(cmd, daq[3])
 
         time.sleep(1)
 
@@ -281,18 +278,18 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         cmd = self.Bindir + \
             '%s %s%s -o "%s"' % (onlconsts.kEXESCRIPT,
                                  tcb[1], onldaqdiropt + rawdatadiropt, tcb[2])
-        onlutils.execute_cmd(cmd, tcb[3])
+        onlutils.run_ssh_cmd(cmd, tcb[3])
 
         self.OnThisRC = True
         self.StartTime = 0
         self.EndTime = 0
 
     def config_run(self):
-        onlutils.execute_command(self.RunSocket, onlconsts.kCONFIGRUN)
+        onlutils.send_daq_cmd(self.RunSocket, onlconsts.kCONFIGRUN)
         self.ConfigButton.setStyleSheet("background-color: yellow")
 
     def start_run(self):
-        onlutils.execute_command(self.RunSocket, onlconsts.kSTARTRUN)
+        onlutils.send_daq_cmd(self.RunSocket, onlconsts.kSTARTRUN)
         self.StartButton.setStyleSheet("background-color: yellow")
 
     def end_run(self):
@@ -301,7 +298,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         if reply.clickedButton() is reply.button(QMessageBox.No):
             return
 
-        onlutils.execute_command(self.RunSocket, onlconsts.kENDRUN)
+        onlutils.send_daq_cmd(self.RunSocket, onlconsts.kENDRUN)
         self.EndButton.setStyleSheet("background-color: yellow")
 
     def exit_run(self):
@@ -322,7 +319,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 return
 
         if self.RunSocket:
-            onlutils.execute_command(self.RunSocket, onlconsts.kEXIT)
+            onlutils.send_daq_cmd(self.RunSocket, onlconsts.kEXIT)
 
     def update_runstate(self):
         self.RunState, self.RunSocket = onlutils.query_runstate(
@@ -363,7 +360,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 self._is_asking_goodrun = True
 
                 if not self.EndTime:
-                    reply = onlutils.execute_command(
+                    reply = onlutils.send_daq_cmd(
                         self.RunSocket, onlconsts.kQUERYRUNINFO)
                     if reply and "endtime" in reply:
                         self.EndTime = reply["endtime"]

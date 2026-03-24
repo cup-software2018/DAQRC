@@ -10,28 +10,51 @@ _ctx = zmq.Context.instance()
 
 
 def get_state(status):
-    for n in range(1, 16):
+    """
+    Extracts the current state from the bitmask.
+    Matches C++ RUNSTATE::GetState logic.
+    """
+    try:
+        status = int(status)
+    except (ValueError, TypeError):
+        return 0
+
+    for n in range(1, 17):
         if status & (1 << n):
             return n
     return 0
 
 
 def check_state(status, state):
-    if status & (1 << state):
-        return True
-    return False
+    """
+    Checks if a specific state bit is set.
+    Matches C++ RUNSTATE::CheckState logic.
+    """
+    try:
+        status = int(status)
+    except (ValueError, TypeError):
+        return False
+
+    return bool(status & (1 << state))
 
 
 def check_error(status):
-    if status & (1 << onlconsts.kERROR):
-        return True
-    return False
+    """
+    Checks if the error bit is set.
+    Matches C++ RUNSTATE::CheckError logic.
+    """
+    try:
+        status = int(status)
+    except (ValueError, TypeError):
+        return False
+
+    return bool(status & (1 << onlconsts.kERROR))
 
 
 def get_connection(endpoint, sock_type=zmq.REQ):
     """
     Creates and connects a ZeroMQ socket.
-    Timeout is now handled by poll() in execute_command.
+    Timeout is now handled by poll() in send_daq_cmd.
     """
     sock = _ctx.socket(sock_type)
     sock.setsockopt(zmq.LINGER, 0)
@@ -39,7 +62,7 @@ def get_connection(endpoint, sock_type=zmq.REQ):
     return sock
 
 
-def execute_command(sock, cmd_string, extra_data=None, timeout_ms=200):
+def send_daq_cmd(sock, cmd_string, extra_data=None, timeout_ms=200):
     """
     Sends a JSON command and uses poll() to prevent GUI freezing.
     Returns parsed JSON or None if timeout/error occurs.
@@ -71,16 +94,21 @@ def query_runstate(endpoint, sock=None):
     if sock is None:
         sock = get_connection(endpoint)
 
-    reply = execute_command(sock, onlconsts.kQUERYDAQSTATUS)
+    reply = send_daq_cmd(sock, onlconsts.kQUERYDAQSTATUS)
 
-    if reply is None or "status" not in reply:
-        sock.close()
+    # 1. Check if communication failed or status is not "ok"
+    if reply is None or reply.get("status") != "ok":
+        if sock:
+            sock.close()
         return onlconsts.kDOWN, None
 
-    return reply["status"], sock
+    # 2. Extract the actual bitmask state using the "run_status" key
+    run_status = reply.get("run_status", onlconsts.kDOWN)
+
+    return run_status, sock
 
 
-def execute_cmd(cmd, host='localhost'):
+def run_ssh_cmd(cmd, host='localhost'):
     """
     Executes a shell command on a remote host via SSH.
     """
