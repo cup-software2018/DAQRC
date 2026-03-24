@@ -3,6 +3,7 @@ import sys
 import time
 import json
 import yaml
+import logging
 from datetime import datetime
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
@@ -18,6 +19,28 @@ log = onlutils.get_logger("RC", "/tmp/cupdaq_rc.log")
 def sortfunc(e):
     # Ensure TCB(mode=0) gets sorted to the front before moving to the end
     return e[0]
+
+# -------------------------------------------------------------------
+# Custom Logging Handler to redirect logs to PyQt5 GUI securely
+# -------------------------------------------------------------------
+
+
+class LogSignaller(QObject):
+    new_log = pyqtSignal(str, str)  # message, levelname
+
+
+class GuiLogHandler(logging.Handler):
+    def __init__(self, signaller):
+        super().__init__()
+        self.signaller = signaller
+        # GUI에는 시간만 간략히 표시하도록 포맷 설정
+        self.setFormatter(logging.Formatter(
+            '[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s', datefmt='%H:%M:%S'))
+
+    def emit(self, record):
+        msg = self.format(record)
+        self.signaller.new_log.emit(msg, record.levelname)
+# -------------------------------------------------------------------
 
 
 class MainWindow(QMainWindow, Ui_MainWindow):
@@ -68,6 +91,17 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         # ZMQ persistent socket for logger
         self.LoggerSocket = None
 
+        # --- GUI Logging Setup ---
+        self.log_signaller = LogSignaller()
+        self.log_signaller.new_log.connect(self.append_log)
+
+        self.gui_handler = GuiLogHandler(self.log_signaller)
+        self.gui_handler.setLevel(logging.INFO)
+
+        log.addHandler(self.gui_handler)
+        onlutils.log.addHandler(self.gui_handler)
+        # -------------------------
+
         log.info("Starting Run Control GUI...")
 
         # Launch the background logger daemon if it's dead when RC starts
@@ -78,11 +112,23 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         timer.setInterval(500)
         timer.start()
 
+    @pyqtSlot(str, str)
+    def append_log(self, msg, level):
+        """Slot to receive log messages and display them in the LogViewer with colors."""
+        color = "black"
+        if level in ["ERROR", "CRITICAL"]:
+            color = "red"
+        elif level == "WARNING":
+            color = "#FF8C00"  # Dark Orange
+        elif level == "DEBUG":
+            color = "gray"
+        elif level == "INFO":
+            color = "blue"
+
+        html_msg = f'<span style="color:{color};">{msg}</span>'
+        self.LogViewer.append(html_msg)
+
     def check_and_start_logger(self):
-        """
-        Check if the local ZMQ Logger is running using the persistent socket.
-        If not, spawn it.
-        """
         reply = self.send_logger_cmd({"cmd": "PING"})
 
         if not reply:
@@ -100,10 +146,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                      onlconsts.kLOGGERPORT)
 
     def send_logger_cmd(self, req_data):
-        """
-        Sends a JSON command to the logger using a persistent socket.
-        Recreates the socket if a timeout or error occurs (Lazy Pirate Pattern).
-        """
         if self.LoggerSocket is None:
             self.LoggerSocket = onlutils.get_connection(onlconsts.kLOGGER_ADDR)
 
@@ -158,6 +200,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.StartTime = 0
         self.EndTime = 0
         self.RunStatsTextEdit.clear()
+        self.LogViewer.clear()
 
         req = {
             "cmd": "BOOT_RUN",
@@ -216,12 +259,12 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
             with open(merged_local_config, 'w', encoding='utf-8') as out_fp:
                 yaml.dump(main_config, out_fp,
-                          default_flow_style=False, sort_keys=False)
+                          default_flow_style=None, sort_keys=False)
 
             cmd = 'scp %s %s:%s' % (
                 merged_local_config, onlconsts.kDAQSERVER_IP, target_config)
             os.system(cmd)
-            log.debug("Merged config SCP copied to target: %s", target_config)
+            log.info("Merged config SCP copied to target: %s", target_config)
 
             if os.path.exists(merged_local_config):
                 os.remove(merged_local_config)
@@ -284,8 +327,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 cmd = self.Bindir + \
                     '%s %s%s -o "%s"' % (onlconsts.kEXESCRIPT,
                                          daq[1], onldaqdiropt + rawdatadiropt, daq[2])
-                log.info(
-                    "Executing remote command via SSH on %s: %s", daq[3], cmd)
+                log.info("Executing remote DAQ command via SSH on %s", daq[3])
                 onlutils.run_ssh_cmd(cmd, daq[3])
 
         time.sleep(1)
@@ -294,7 +336,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         cmd = self.Bindir + \
             '%s %s%s -o "%s"' % (onlconsts.kEXESCRIPT,
                                  tcb[1], onldaqdiropt + rawdatadiropt, tcb[2])
-        log.info("Executing TCB remote command via SSH on %s: %s", tcb[3], cmd)
+        log.info("Executing TCB remote command via SSH on %s", tcb[3])
         onlutils.run_ssh_cmd(cmd, tcb[3])
 
         self.OnThisRC = True
@@ -534,7 +576,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.move(qr.topLeft())
 
     def msgbox_error(self, message):
-        log.error("GUI Error MessageBox triggered: %s", message)
+        log.error("GUI Error: %s", message)
         font = QFont()
         font.setPointSize(12)
         box = QMessageBox()

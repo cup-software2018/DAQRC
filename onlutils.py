@@ -120,8 +120,8 @@ def send_daq_cmd(sock, cmd_string, extra_data=None, timeout_ms=200):
         # Timeout check
         if sock.poll(timeout=timeout_ms) == 0:
             # Keep it at the DEBUG level since frequent polling timeouts can spam the logs.
-            log.debug("ZMQ poll timeout (%d ms) on command: %s",
-                      timeout_ms, cmd_string)
+            #log.debug("ZMQ poll timeout (%d ms) on command: %s",
+            #          timeout_ms, cmd_string)
             return None
 
         reply = sock.recv_json()
