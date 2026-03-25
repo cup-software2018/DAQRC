@@ -12,7 +12,7 @@ from rcui import Ui_MainWindow
 import onlconsts
 import onlutils
 
-# Initialize the RC logger (saves to /tmp/cupdaq_rc.log)
+# Initialize the RC logger
 log = onlutils.get_logger("RC", "/tmp/cupdaq_rc.log")
 
 
@@ -33,7 +33,6 @@ class GuiLogHandler(logging.Handler):
     def __init__(self, signaller):
         super().__init__()
         self.signaller = signaller
-        # GUI에는 시간만 간략히 표시하도록 포맷 설정
         self.setFormatter(logging.Formatter(
             '[%(asctime)s] [%(name)s] [%(levelname)s] %(message)s', datefmt='%H:%M:%S'))
 
@@ -88,8 +87,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
         self.daq_endpoint = onlconsts.kDAQSERVER_ADDR
 
-        # ZMQ persistent socket for logger
-        self.LoggerSocket = None
+        # ZMQ persistent socket for DAQ Monitor daemon
+        self.MonitorSocket = None
 
         # --- GUI Logging Setup ---
         self.log_signaller = LogSignaller()
@@ -104,8 +103,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
         log.info("Starting Run Control GUI...")
 
-        # Launch the background logger daemon if it's dead when RC starts
-        self.check_and_start_logger()
+        # Launch the background monitor daemon if it's dead when RC starts
+        self.check_and_start_monitor()
 
         timer = QTimer(self)
         timer.timeout.connect(self.update_runstate)
@@ -128,34 +127,35 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         html_msg = f'<span style="color:{color};">{msg}</span>'
         self.LogViewer.append(html_msg)
 
-    def check_and_start_logger(self):
-        reply = self.send_logger_cmd({"cmd": "PING"})
+    def check_and_start_monitor(self):
+        reply = self.send_monitor_cmd({"cmd": "PING"})
 
         if not reply:
             log.warning(
-                "Logger daemon is not responding. Starting logger.py in background...")
-            logger_script = os.path.join(os.path.dirname(
-                os.path.abspath(__file__)), 'logger.py')
-            log_file = '/tmp/cupdaq_logger_daemon.log'
+                "Monitor daemon is not responding. Starting daq_monitor.py in background...")
+            monitor_script = os.path.join(os.path.dirname(
+                os.path.abspath(__file__)), 'daq_monitor.py')
+            log_file = '/tmp/cupdaq_monitor_daemon.log'
             python_exe = sys.executable if sys.executable else 'python'
-            start_cmd = f"nohup {python_exe} {logger_script} > {log_file} 2>&1 &"
+            start_cmd = f"nohup {python_exe} {monitor_script} > {log_file} 2>&1 &"
             os.system(start_cmd)
             time.sleep(1.0)
         else:
-            log.info("Logger daemon is already running on port %d.",
-                     onlconsts.kLOGGERPORT)
+            log.info("Monitor daemon is already running on port %d.",
+                     onlconsts.kMONITORPORT)
 
-    def send_logger_cmd(self, req_data):
-        if self.LoggerSocket is None:
-            self.LoggerSocket = onlutils.get_connection(onlconsts.kLOGGER_ADDR)
+    def send_monitor_cmd(self, req_data):
+        if self.MonitorSocket is None:
+            self.MonitorSocket = onlutils.get_connection(
+                onlconsts.kMONITOR_ADDR)
 
         cmd = req_data.get("cmd")
-        reply = onlutils.send_daq_cmd(self.LoggerSocket, cmd, req_data)
+        reply = onlutils.send_daq_cmd(self.MonitorSocket, cmd, req_data)
 
         if reply is None:
-            log.error("Logger timeout on command '%s'. Resetting socket.", cmd)
-            self.LoggerSocket.close()
-            self.LoggerSocket = None
+            log.error("Monitor timeout on command '%s'. Resetting socket.", cmd)
+            self.MonitorSocket.close()
+            self.MonitorSocket = None
             return {}
 
         return reply
@@ -172,7 +172,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
     def boot_run(self):
         log.info("Initiating BOOT_RUN sequence...")
-        self.check_and_start_logger()
+        self.check_and_start_monitor()
 
         self.Shift = str(self.ShiftConfig.text())
         if not self.Shift:
@@ -210,14 +210,14 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             "config": self.ConfigFile
         }
 
-        resp = self.send_logger_cmd(req)
+        resp = self.send_monitor_cmd(req)
         if "run_num" in resp:
             self.RunNumber = resp["run_num"]
             log.info("BOOT_RUN successful. Assigned Run Number: %06d",
                      self.RunNumber)
         else:
-            log.error("Logger failed to boot run (DB error). Response: %s", resp)
-            return self.msgbox_error("Logger failed to boot run (DB error).")
+            log.error("Monitor failed to boot run (DB error). Response: %s", resp)
+            return self.msgbox_error("Monitor failed to boot run (DB error).")
 
         run_number = self.RunNumber
         config_file = self.ConfigFile
@@ -261,7 +261,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 yaml.dump(main_config, out_fp,
                           default_flow_style=None, sort_keys=False)
 
-            cmd = 'scp %s %s:%s' % (
+            cmd = 'scp -q %s %s:%s' % (
                 merged_local_config, onlconsts.kDAQSERVER_IP, target_config)
             os.system(cmd)
             log.info("Merged config SCP copied to target: %s", target_config)
@@ -404,7 +404,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.set_runstate(self.RunState)
 
         if not self.OnThisRC and self.RunState != onlconsts.kDOWN:
-            resp = self.send_logger_cmd({"cmd": "SYNC_LATEST"})
+            resp = self.send_monitor_cmd({"cmd": "SYNC_LATEST"})
             if resp and "runnum" in resp:
                 self.RunNumber = resp["runnum"]
                 self.Shift = resp["shift"]
@@ -423,10 +423,10 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                     '<font color="blue"><b>%s</b></font> loaded' % configfile)
                 self.OnThisRC = True
                 log.info(
-                    "Synced latest run details from logger: RunNum %06d", self.RunNumber)
+                    "Synced latest run details from monitor: RunNum %06d", self.RunNumber)
 
         if onlutils.check_state(self.RunState, onlconsts.kRUNNING) or onlutils.check_state(self.RunState, onlconsts.kRUNENDED):
-            resp = self.send_logger_cmd({"cmd": "GET_STATS"})
+            resp = self.send_monitor_cmd({"cmd": "GET_STATS"})
             if resp:
                 self.RunStats = resp.get("RunStats", {})
                 self.SubRunNumber = resp.get("SubRunNumber", 0)
@@ -466,7 +466,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                     "etime_str": etime_str,
                     "final_stats": self.RunStats
                 }
-                self.send_logger_cmd(req)
+                self.send_monitor_cmd(req)
 
         curtime = time.strftime("%Y-%m-%d %H:%M:%S")
         stime = datetime.fromtimestamp(self.StartTime).strftime(

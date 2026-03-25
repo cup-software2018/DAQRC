@@ -1,20 +1,20 @@
-import onlutils
-import onlconsts
-from datetime import datetime
-import threading
-import json
-import zmq
-import yaml
-import sqlite3
-import time
 import sys
 import os
+import time
+import threading
+import json
+import yaml
+import sqlite3
+import zmq
+
+import onlutils
+import onlconsts
 
 # Ensure the current directory is in the path to avoid ModuleNotFoundError when running via nohup
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Initialize the LOGGER daemon logger (saves to /tmp/cupdaq_logger_daemon.log)
-log = onlutils.get_logger("LOGGER", "/tmp/cupdaq_logger_daemon.log")
+# Initialize the DAQ_MONITOR daemon logger (saves to /tmp/cupdaq_monitor_daemon.log)
+log = onlutils.get_logger("DAQ_MONITOR", "/tmp/cupdaq_monitor_daemon.log")
 
 # Shared data in memory for real-time communication with RC
 shared_data = {
@@ -26,7 +26,7 @@ shared_data = {
 }
 data_lock = threading.Lock()
 
-# Automatically terminate logger if DAQ is DOWN for this many seconds
+# Automatically terminate monitor if DAQ is DOWN for this many seconds
 IDLE_TIMEOUT_SEC = 3600
 
 
@@ -36,10 +36,11 @@ def handle_rc_requests():
     """
     context = zmq.Context.instance()
     sock = context.socket(zmq.REP)
-    sock.bind(f"tcp://*:{onlconsts.kLOGGERPORT}")
+    # NOTE: Ensure onlconsts.kMONITORPORT is updated in onlconsts.py (formerly kLOGGERPORT)
+    sock.bind(f"tcp://*:{onlconsts.kMONITORPORT}")
 
     log.info("RC Request Handler (ZMQ REP) started on port %d",
-             onlconsts.kLOGGERPORT)
+             onlconsts.kMONITORPORT)
 
     while True:
         try:
@@ -129,11 +130,11 @@ def handle_rc_requests():
                 pass
 
 
-def run_logger():
+def run_monitor():
     """
-    Monitor DAQ state and perform real-time DB logging at 1Hz using ZMQ JSON.
+    Monitor DAQ state and perform real-time DB tracking at 1Hz using ZMQ JSON.
     """
-    log.info("DAQ Logger daemon main loop started.")
+    log.info("DAQ Monitor daemon main loop started.")
     last_run_number = -1
     last_run_state = -1
 
@@ -151,7 +152,7 @@ def run_logger():
 
         if current_time - last_active_time > IDLE_TIMEOUT_SEC:
             log.warning(
-                "Logger idle for %d seconds. Auto-terminating.", IDLE_TIMEOUT_SEC)
+                "Monitor idle for %d seconds. Auto-terminating.", IDLE_TIMEOUT_SEC)
             break
 
         try:
@@ -337,11 +338,11 @@ def run_logger():
                             "DB UPDATE failed in polling loop: %s", db_e, exc_info=True)
 
         except Exception as global_e:
-            log.critical("Logger Main Loop Crashed: %s",
+            log.critical("Monitor Main Loop Crashed: %s",
                          global_e, exc_info=True)
 
 
 if __name__ == '__main__':
     api_thread = threading.Thread(target=handle_rc_requests, daemon=True)
     api_thread.start()
-    run_logger()
+    run_monitor()
