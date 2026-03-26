@@ -262,6 +262,7 @@ def run_monitor():
                         pass
                     daq_info_sock = None
 
+
                 # 4. Polling Monitor Modules
                 update_query = "UPDATE runcatalog SET "
                 update_params = []
@@ -273,25 +274,30 @@ def run_monitor():
 
                         if mon['sock'] is None:
                             endpoint = f"tcp://{mon['ip']}:{mon['port']}"
-                            log.debug(
-                                "Connecting to monitoring module %s at %s", name, endpoint)
+                            log.debug("Connecting to monitoring module %s at %s", name, endpoint)
                             mon['sock'] = onlutils.get_connection(endpoint)
-                            # Assuming kQUERYMONITOR initializes the module
-                            onlutils.send_daq_cmd(
-                                mon['sock'], onlconsts.kQUERYMONITOR)
+                            
+                            init_reply = onlutils.send_daq_cmd(mon['sock'], onlconsts.kQUERYMONITOR)
+                            
+                            if init_reply is None:
+                                log.warning("Module %s initialization timeout!", name)
+                                try:
+                                    mon['sock'].close()
+                                except:
+                                    pass
+                                mon['sock'] = None
+                                continue
 
                         if mon['sock']:
                             try:
                                 trg_info = onlutils.send_daq_cmd(
                                     mon['sock'], onlconsts.kQUERYTRGINFO)
+                                
                                 if trg_info is None:
-                                    log.warning(
-                                        "Module %s TrgInfo timeout!", name)
+                                    log.warning("Module %s TrgInfo timeout!", name)
                                     raise Exception("Recv empty")
 
-                                # Modified JSON keys to match C++ TF_MsgServer output exactly
-                                n = run_stats[name]['n'] = trg_info.get(
-                                    "nevent", 0)
+                                n = run_stats[name]['n'] = trg_info.get("nevent", 0)
                                 t_ns = trg_info.get("trgtime", 0)
                                 t = run_stats[name]['t'] = t_ns / 1000000000.0
 

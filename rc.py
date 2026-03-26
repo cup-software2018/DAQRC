@@ -346,12 +346,24 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
     def config_run(self):
         log.info("User requested CONFIG_RUN.")
-        onlutils.send_daq_cmd(self.RunSocket, onlconsts.kCONFIGRUN)
+        reply = onlutils.send_daq_cmd(
+            self.RunSocket, onlconsts.kCONFIGRUN, timeout_ms=2000)
+
+        if reply is None and self.RunSocket:
+            self.RunSocket.close()
+            self.RunSocket = None
+
         self.ConfigButton.setStyleSheet("background-color: yellow")
 
     def start_run(self):
         log.info("User requested START_RUN.")
-        onlutils.send_daq_cmd(self.RunSocket, onlconsts.kSTARTRUN)
+        reply = onlutils.send_daq_cmd(
+            self.RunSocket, onlconsts.kSTARTRUN, timeout_ms=1000)
+
+        if reply is None and self.RunSocket:
+            self.RunSocket.close()
+            self.RunSocket = None
+
         self.StartButton.setStyleSheet("background-color: yellow")
 
     def end_run(self):
@@ -361,7 +373,13 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             return
 
         log.info("User requested END_RUN.")
-        onlutils.send_daq_cmd(self.RunSocket, onlconsts.kENDRUN)
+        reply = onlutils.send_daq_cmd(
+            self.RunSocket, onlconsts.kENDRUN, timeout_ms=1000)
+
+        if reply is None and self.RunSocket:
+            self.RunSocket.close()
+            self.RunSocket = None
+
         self.EndButton.setStyleSheet("background-color: yellow")
 
     def exit_run(self):
@@ -383,7 +401,11 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
         log.warning("User requested FORCE EXIT.")
         if self.RunSocket:
-            onlutils.send_daq_cmd(self.RunSocket, onlconsts.kEXIT)
+            reply = onlutils.send_daq_cmd(
+                self.RunSocket, onlconsts.kEXIT, timeout_ms=1000)
+            if reply is None:
+                self.RunSocket.close()
+                self.RunSocket = None
 
     def update_runstate(self):
         old_state = self.RunState

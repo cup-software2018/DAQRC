@@ -31,7 +31,6 @@ kMONITORPORT = 7030
 kMONITOR_ADDR = 'tcp://%s:%d' % (kMONITORIPADDR, kMONITORPORT)
 
 kEXESCRIPT = 'executedaq.sh'
-kMESSLEN = 32
 
 # Commands (Updated for JSON payload)
 kCONFIGRUN = "kCONFIGRUN"
