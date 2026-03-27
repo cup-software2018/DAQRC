@@ -1,12 +1,9 @@
-
 #
 # DAQ Server where tcb is supposed to be running
 #
-kDAQSERVER_IP = ''     # Update with actual DAQ IP
-kDAQSERVER_PORT =      # Update with actual DAQ Port
+kDAQSERVER_IP = 'localhost'  # Update with actual DAQ IP
+kDAQSERVER_PORT = 7100       # Update with actual DAQ Port
 kDAQSERVER_ADDR = 'tcp://%s:%d' % (kDAQSERVER_IP, kDAQSERVER_PORT)
-
-
 
 # If RC is running on same server with DAQ
 kISREMOTEDAQ = False
@@ -25,16 +22,15 @@ kRUNTYPELIST = ['', 'physics', 'calibration', 'test']
 kOUTPUTFILEFORMAT = 'hdf5' # hdf5 or root
 
 # ===========================================================
-# Do not modify from here!!!
+# Do not modify from here!!! (Updated for DAQ Monitor refactoring)
 # ===========================================================
 
-# Logger ZMQ Server Address
-kLOGGERIPADDR = '127.0.0.1'
-kLOGGERPORT = 9999
-kLOGGER_ADDR = 'tcp://%s:%d' % (kLOGGERIPADDR, kLOGGERPORT)
+# DAQ Monitor ZMQ Server Address
+kMONITORIPADDR = 'localhost'
+kMONITORPORT = 7030
+kMONITOR_ADDR = 'tcp://%s:%d' % (kMONITORIPADDR, kMONITORPORT)
 
 kEXESCRIPT = 'executedaq.sh'
-kMESSLEN = 32
 
 # Commands (Updated for JSON payload)
 kCONFIGRUN = "kCONFIGRUN"
@@ -57,4 +53,4 @@ kWARNING = 6
 kERROR = 7
 
 kDAQSTATE = ['Down', 'Booted', 'Configured',
-             'Running', 'RunEnd', 'ProcEnd', 'Warning', 'Error']
+             'Running', 'RunEnded', 'ProcEnded', 'Warning', 'Error']

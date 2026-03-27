@@ -4,7 +4,7 @@ import zmq
 import json
 import logging
 from logging.handlers import RotatingFileHandler
-from subprocess import Popen, PIPE
+import subprocess
 import onlconsts
 
 # Reuse global ZeroMQ Context for better efficiency
@@ -150,18 +150,41 @@ def query_runstate(endpoint, sock=None):
 def run_ssh_cmd(cmd, host='localhost'):
     """
     Executes a shell command on a remote host via SSH.
+    Waits for the process to complete and checks the return code.
+    Returns a tuple: (success: bool, result_or_error)
     """
     log.debug("Executing SSH command on %s: %s", host, cmd)
-    ssh = Popen(['ssh', '%s' % host, cmd],
-                shell=False, stdout=PIPE, stderr=PIPE)
 
-    result = ssh.stdout.readlines()
-    if not result:
-        log.warning("SSH command returned empty result on %s", host)
-        return None
+    ssh = subprocess.Popen(['ssh', host, cmd],
+                           shell=False,
+                           stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE)
 
-    result = [str(s).replace("b'", "").replace("\\n'", "") for s in result]
-    return result
+    # communicate() safely waits for the process to finish and reads all streams,
+    # preventing potential deadlocks if the output buffers fill up.
+    stdout_data, stderr_data = ssh.communicate()
+
+    # Check the actual exit status of the command instead of stdout
+    if ssh.returncode != 0:
+        error_msg = stderr_data.decode('utf-8').strip()
+        # Fallback to stdout if stderr is empty
+        if not error_msg:
+            error_msg = stdout_data.decode('utf-8').strip()
+
+        log.warning("SSH command failed on %s (Return code: %d). Error: %s",
+                    host, ssh.returncode, error_msg)
+        return False, error_msg
+
+    # If the command succeeded but produced no output, it is not an error
+    if not stdout_data:
+        log.debug("SSH command succeeded on %s but produced no stdout.", host)
+        return True, []
+
+    # Properly decode bytes to string and split into lines safely
+    decoded_output = stdout_data.decode('utf-8')
+    result = [line for line in decoded_output.splitlines() if line]
+
+    return True, result
 
 
 def HMSFormatter(value):

@@ -1,20 +1,20 @@
-import onlutils
-import onlconsts
-from datetime import datetime
-import threading
-import json
-import zmq
-import yaml
-import sqlite3
-import time
 import sys
 import os
+import time
+import threading
+import json
+import yaml
+import sqlite3
+import zmq
+
+import onlutils
+import onlconsts
 
 # Ensure the current directory is in the path to avoid ModuleNotFoundError when running via nohup
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Initialize the LOGGER daemon logger (saves to /tmp/cupdaq_logger_daemon.log)
-log = onlutils.get_logger("LOGGER", "/tmp/cupdaq_logger_daemon.log")
+# Initialize the DAQ_MONITOR daemon logger (saves to /tmp/cupdaq_monitor_daemon.log)
+log = onlutils.get_logger("DAQ_MONITOR", "/tmp/cupdaq_monitor_daemon.log")
 
 # Shared data in memory for real-time communication with RC
 shared_data = {
@@ -26,7 +26,7 @@ shared_data = {
 }
 data_lock = threading.Lock()
 
-# Automatically terminate logger if DAQ is DOWN for this many seconds
+# Automatically terminate monitor if DAQ is DOWN for this many seconds
 IDLE_TIMEOUT_SEC = 3600
 
 
@@ -36,10 +36,11 @@ def handle_rc_requests():
     """
     context = zmq.Context.instance()
     sock = context.socket(zmq.REP)
-    sock.bind(f"tcp://*:{onlconsts.kLOGGERPORT}")
+    # NOTE: Ensure onlconsts.kMONITORPORT is updated in onlconsts.py (formerly kLOGGERPORT)
+    sock.bind(f"tcp://*:{onlconsts.kMONITORPORT}")
 
     log.info("RC Request Handler (ZMQ REP) started on port %d",
-             onlconsts.kLOGGERPORT)
+             onlconsts.kMONITORPORT)
 
     while True:
         try:
@@ -129,11 +130,11 @@ def handle_rc_requests():
                 pass
 
 
-def run_logger():
+def run_monitor():
     """
-    Monitor DAQ state and perform real-time DB logging at 1Hz using ZMQ JSON.
+    Monitor DAQ state and perform real-time DB tracking at 1Hz using ZMQ JSON.
     """
-    log.info("DAQ Logger daemon main loop started.")
+    log.info("DAQ Monitor daemon main loop started.")
     last_run_number = -1
     last_run_state = -1
 
@@ -151,7 +152,7 @@ def run_logger():
 
         if current_time - last_active_time > IDLE_TIMEOUT_SEC:
             log.warning(
-                "Logger idle for %d seconds. Auto-terminating.", IDLE_TIMEOUT_SEC)
+                "Monitor idle for %d seconds. Auto-terminating.", IDLE_TIMEOUT_SEC)
             break
 
         try:
@@ -261,6 +262,7 @@ def run_logger():
                         pass
                     daq_info_sock = None
 
+
                 # 4. Polling Monitor Modules
                 update_query = "UPDATE runcatalog SET "
                 update_params = []
@@ -272,25 +274,30 @@ def run_logger():
 
                         if mon['sock'] is None:
                             endpoint = f"tcp://{mon['ip']}:{mon['port']}"
-                            log.debug(
-                                "Connecting to monitoring module %s at %s", name, endpoint)
+                            log.debug("Connecting to monitoring module %s at %s", name, endpoint)
                             mon['sock'] = onlutils.get_connection(endpoint)
-                            # Assuming kQUERYMONITOR initializes the module
-                            onlutils.send_daq_cmd(
-                                mon['sock'], onlconsts.kQUERYMONITOR)
+                            
+                            init_reply = onlutils.send_daq_cmd(mon['sock'], onlconsts.kQUERYMONITOR)
+                            
+                            if init_reply is None:
+                                log.warning("Module %s initialization timeout!", name)
+                                try:
+                                    mon['sock'].close()
+                                except:
+                                    pass
+                                mon['sock'] = None
+                                continue
 
                         if mon['sock']:
                             try:
                                 trg_info = onlutils.send_daq_cmd(
                                     mon['sock'], onlconsts.kQUERYTRGINFO)
+                                
                                 if trg_info is None:
-                                    log.warning(
-                                        "Module %s TrgInfo timeout!", name)
+                                    log.warning("Module %s TrgInfo timeout!", name)
                                     raise Exception("Recv empty")
 
-                                # Modified JSON keys to match C++ TF_MsgServer output exactly
-                                n = run_stats[name]['n'] = trg_info.get(
-                                    "nevent", 0)
+                                n = run_stats[name]['n'] = trg_info.get("nevent", 0)
                                 t_ns = trg_info.get("trgtime", 0)
                                 t = run_stats[name]['t'] = t_ns / 1000000000.0
 
@@ -337,11 +344,11 @@ def run_logger():
                             "DB UPDATE failed in polling loop: %s", db_e, exc_info=True)
 
         except Exception as global_e:
-            log.critical("Logger Main Loop Crashed: %s",
+            log.critical("Monitor Main Loop Crashed: %s",
                          global_e, exc_info=True)
 
 
 if __name__ == '__main__':
     api_thread = threading.Thread(target=handle_rc_requests, daemon=True)
     api_thread.start()
-    run_logger()
+    run_monitor()
