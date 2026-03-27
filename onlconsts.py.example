@@ -53,4 +53,4 @@ kWARNING = 6
 kERROR = 7
 
 kDAQSTATE = ['Down', 'Booted', 'Configured',
-             'Running', 'RunEnd', 'ProcEnd', 'Warning', 'Error']
+             'Running', 'RunEnded', 'ProcEnded', 'Warning', 'Error']

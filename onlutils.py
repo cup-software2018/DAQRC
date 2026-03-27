@@ -151,6 +151,7 @@ def run_ssh_cmd(cmd, host='localhost'):
     """
     Executes a shell command on a remote host via SSH.
     Waits for the process to complete and checks the return code.
+    Returns a tuple: (success: bool, result_or_error)
     """
     log.debug("Executing SSH command on %s: %s", host, cmd)
 
@@ -166,20 +167,24 @@ def run_ssh_cmd(cmd, host='localhost'):
     # Check the actual exit status of the command instead of stdout
     if ssh.returncode != 0:
         error_msg = stderr_data.decode('utf-8').strip()
+        # Fallback to stdout if stderr is empty
+        if not error_msg:
+            error_msg = stdout_data.decode('utf-8').strip()
+
         log.warning("SSH command failed on %s (Return code: %d). Error: %s",
                     host, ssh.returncode, error_msg)
-        return None
+        return False, error_msg
 
     # If the command succeeded but produced no output, it is not an error
     if not stdout_data:
         log.debug("SSH command succeeded on %s but produced no stdout.", host)
-        return []
+        return True, []
 
     # Properly decode bytes to string and split into lines safely
     decoded_output = stdout_data.decode('utf-8')
     result = [line for line in decoded_output.splitlines() if line]
 
-    return result
+    return True, result
 
 
 def HMSFormatter(value):

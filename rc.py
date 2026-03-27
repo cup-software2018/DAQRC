@@ -328,7 +328,11 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                     '%s %s%s -o "%s"' % (onlconsts.kEXESCRIPT,
                                          daq[1], onldaqdiropt + rawdatadiropt, daq[2])
                 log.info("Executing remote DAQ command via SSH on %s", daq[3])
-                onlutils.run_ssh_cmd(cmd, daq[3])
+
+                # Check execution result and log error if failed
+                success, output = onlutils.run_ssh_cmd(cmd, daq[3])
+                if not success:
+                    log.error("Execution failed on %s: %s", daq[3], output)
 
         time.sleep(1)
 
@@ -337,7 +341,11 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             '%s %s%s -o "%s"' % (onlconsts.kEXESCRIPT,
                                  tcb[1], onldaqdiropt + rawdatadiropt, tcb[2])
         log.info("Executing TCB remote command via SSH on %s", tcb[3])
-        onlutils.run_ssh_cmd(cmd, tcb[3])
+
+        # Check TCB execution result
+        success, output = onlutils.run_ssh_cmd(cmd, tcb[3])
+        if not success:
+            log.error("TCB Execution failed on %s: %s", tcb[3], output)
 
         self.OnThisRC = True
         self.StartTime = 0
