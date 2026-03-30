@@ -473,6 +473,11 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                         self.RunSocket, onlconsts.kQUERYRUNINFO)
                     if reply and "end_time" in reply:
                         self.EndTime = reply["end_time"]
+                    elif reply is None:
+                        # Close the REQ socket on timeout to ensure it gets recreated in the next cycle
+                        if self.RunSocket:
+                            self.RunSocket.close()
+                            self.RunSocket = None
 
                 onlbit = 0
                 msg = 'Tag run %06d as GOODRUN?' % self.RunNumber
@@ -534,7 +539,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
         summary += '</font></pre>'
         self.RunStatsTextEdit.setText(summary)
-
     def set_runstate(self, state):
         if state == onlconsts.kDOWN:
             self.ShiftConfig.setEnabled(True)
