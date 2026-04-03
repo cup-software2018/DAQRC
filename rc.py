@@ -539,6 +539,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
         summary += '</font></pre>'
         self.RunStatsTextEdit.setText(summary)
+
     def set_runstate(self, state):
         if state == onlconsts.kDOWN:
             self.ShiftConfig.setEnabled(True)

@@ -16,13 +16,15 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 # Initialize the DAQ_MONITOR daemon logger (saves to /tmp/cupdaq_monitor_daemon.log)
 log = onlutils.get_logger("DAQ_MONITOR", "/tmp/cupdaq_monitor_daemon.log")
 
-# Shared data in memory for real-time communication with RC
+# Shared data in memory for real-time communication with clients (RC, TSDB, etc.)
 shared_data = {
     "RunStats": {},
     "SubRunNumber": 0,
     "StartTime": 0,
     "EndTime": 0,
-    "MonNames": []
+    "MonNames": [],
+    # Added for TSDB (Time-Series Database) timestamp matching
+    "CurrentTime": 0.0
 }
 data_lock = threading.Lock()
 
@@ -30,16 +32,18 @@ data_lock = threading.Lock()
 IDLE_TIMEOUT_SEC = 3600
 
 
-def handle_rc_requests():
+def handle_requests():
     """
-    Local ZMQ REP server thread handling RC commands (DB insert, tag save, state query).
+    Local ZMQ REP server thread handling client commands.
+    Clients include Run Control (RC) and TSDB agents (e.g., Grafana monitoring).
+    Handles DB insert, tag save, state query, and real-time stats broadcasting.
     """
     context = zmq.Context.instance()
     sock = context.socket(zmq.REP)
-    # NOTE: Ensure onlconsts.kMONITORPORT is updated in onlconsts.py (formerly kLOGGERPORT)
+    # NOTE: Ensure onlconsts.kMONITORPORT is updated in onlconsts.py
     sock.bind(f"tcp://*:{onlconsts.kMONITORPORT}")
 
-    log.info("RC Request Handler (ZMQ REP) started on port %d",
+    log.info("Client Request Handler (ZMQ REP) started on port %d",
              onlconsts.kMONITORPORT)
 
     while True:
@@ -47,83 +51,86 @@ def handle_rc_requests():
             request = sock.recv_json()
             cmd = request.get("cmd")
 
-            # Avoid logging GET_STATS as it arrives at 1Hz and would spam the logs
+            # Avoid logging GET_STATS as it arrives at 1Hz from TSDB/RC and would spam the logs
             if cmd != "GET_STATS":
-                log.debug("Received CMD from RC: %s", cmd)
+                log.debug("Received CMD from client: %s", cmd)
 
             response = {"status": "error"}
 
-            with sqlite3.connect(onlconsts.kRUNCATALOGDBFILE, timeout=5.0) as db_conn:
-                db_conn.row_factory = sqlite3.Row
-                cursor = db_conn.cursor()
+            # 1. Handle in-memory requests (Fast path, no DB required)
+            if cmd == "GET_STATS":
+                with data_lock:
+                    response = shared_data.copy()
 
-                if cmd == "BOOT_RUN":
-                    shift = request.get("shift", "")
-                    runtype = request.get("runtype", "")
-                    rundesc = request.get("rundesc", "")
-                    config = request.get("config", "")
+            # 2. Handle DB-related requests
+            else:
+                with sqlite3.connect(onlconsts.kRUNCATALOGDBFILE, timeout=5.0) as db_conn:
+                    db_conn.row_factory = sqlite3.Row
+                    cursor = db_conn.cursor()
 
-                    cursor.execute(
-                        "INSERT INTO runcatalog (shift, runtype, rundesc, config) VALUES (?, ?, ?, ?)",
-                        (shift, runtype, rundesc, config)
-                    )
-                    db_conn.commit()
-                    response = {"run_num": cursor.lastrowid}
-                    log.info(
-                        "BOOT_RUN processed successfully. Assigned Run Number: %d", response["run_num"])
+                    if cmd == "BOOT_RUN":
+                        shift = request.get("shift", "")
+                        runtype = request.get("runtype", "")
+                        rundesc = request.get("rundesc", "")
+                        config = request.get("config", "")
 
-                elif cmd == "SYNC_LATEST":
-                    cursor.execute(
-                        "SELECT * FROM runcatalog ORDER BY runnum DESC LIMIT 1")
-                    record = cursor.fetchone()
-                    if record:
-                        response = dict(record)
-                    else:
-                        response = {}
+                        cursor.execute(
+                            "INSERT INTO runcatalog (shift, runtype, rundesc, config) VALUES (?, ?, ?, ?)",
+                            (shift, runtype, rundesc, config)
+                        )
+                        db_conn.commit()
+                        response = {"run_num": cursor.lastrowid}
+                        log.info(
+                            "BOOT_RUN processed successfully. Assigned Run Number: %d", response["run_num"])
 
-                elif cmd == "GET_STATS":
-                    with data_lock:
-                        response = shared_data.copy()
+                    elif cmd == "SYNC_LATEST":
+                        cursor.execute(
+                            "SELECT * FROM runcatalog ORDER BY runnum DESC LIMIT 1")
+                        record = cursor.fetchone()
+                        if record:
+                            response = dict(record)
+                        else:
+                            response = {}
 
-                elif cmd == "TAG_GOODRUN":
-                    run_num = request.get("run_num")
-                    onlbit = request.get("onlbit")
-                    stime_str = request.get("stime_str")
-                    etime_str = request.get("etime_str")
+                    elif cmd == "TAG_GOODRUN":
+                        run_num = request.get("run_num")
+                        onlbit = request.get("onlbit")
+                        stime_str = request.get("stime_str")
+                        etime_str = request.get("etime_str")
 
-                    log.info("Tagging RunNum %s as GOODRUN: %s",
-                             run_num, bool(onlbit))
+                        log.info("Tagging RunNum %s as GOODRUN: %s",
+                                 run_num, bool(onlbit))
 
-                    update_query = "UPDATE runcatalog SET stime=?, etime=?, onlbit=?"
-                    update_params = [stime_str, etime_str, onlbit]
+                        update_query = "UPDATE runcatalog SET stime=?, etime=?, onlbit=?"
+                        update_params = [stime_str, etime_str, onlbit]
 
-                    final_stats = request.get("final_stats", {})
-                    for daqname, stats in final_stats.items():
-                        n_val = stats.get('n', 0)
-                        t_val = stats.get('t', 0.0)
-                        if 'AADC' in daqname:
-                            update_query += ", naadc=?, taadc=?"
-                            update_params.extend([n_val, t_val])
-                        elif 'FADC' in daqname:
-                            update_query += ", nfadc=?, tfadc=?"
-                            update_params.extend([n_val, t_val])
-                        elif 'SADC' in daqname:
-                            update_query += ", nsadc=?, tsadc=?"
-                            update_params.extend([n_val, t_val])
-                        elif 'IADC' in daqname:
-                            update_query += ", niadc=?, tiadc=?"
-                            update_params.extend([n_val, t_val])
+                        final_stats = request.get("final_stats", {})
+                        for daqname, stats in final_stats.items():
+                            n_val = stats.get('n', 0)
+                            t_val = stats.get('t', 0.0)
+                            if 'AADC' in daqname:
+                                update_query += ", naadc=?, taadc=?"
+                                update_params.extend([n_val, t_val])
+                            elif 'FADC' in daqname:
+                                update_query += ", nfadc=?, tfadc=?"
+                                update_params.extend([n_val, t_val])
+                            elif 'SADC' in daqname:
+                                update_query += ", nsadc=?, tsadc=?"
+                                update_params.extend([n_val, t_val])
+                            elif 'IADC' in daqname:
+                                update_query += ", niadc=?, tiadc=?"
+                                update_params.extend([n_val, t_val])
 
-                    update_query += " WHERE runnum=?"
-                    update_params.append(run_num)
+                        update_query += " WHERE runnum=?"
+                        update_params.append(run_num)
 
-                    cursor.execute(update_query, tuple(update_params))
-                    db_conn.commit()
-                    response = {"status": "ok"}
+                        cursor.execute(update_query, tuple(update_params))
+                        db_conn.commit()
+                        response = {"status": "ok"}
 
             sock.send_json(response)
         except Exception as e:
-            log.error("Exception in handle_rc_requests: %s", e, exc_info=True)
+            log.error("Exception in handle_requests: %s", e, exc_info=True)
             try:
                 sock.send_json({"status": "error", "message": str(e)})
             except:
@@ -165,7 +172,9 @@ def run_monitor():
                 daq_state_sock, onlconsts.kQUERYDAQSTATUS)
 
             if reply is None:
-                log.debug("DAQ State Reply is None (Timeout/Disconnected).")
+                # Updated log message to include the DAQ server address
+                log.debug(
+                    "DAQ State Reply is None (Timeout/Disconnected) from server: %s", onlconsts.kDAQSERVER_ADDR)
                 try:
                     daq_state_sock.close()
                 except:
@@ -262,25 +271,30 @@ def run_monitor():
                         pass
                     daq_info_sock = None
 
-
                 # 4. Polling Monitor Modules
                 update_query = "UPDATE runcatalog SET "
                 update_params = []
                 set_clauses = []
 
                 with data_lock:
+                    # Update current time for TSDB
+                    shared_data['CurrentTime'] = current_time
+
                     for mon in mon_list:
                         name = mon['name']
 
                         if mon['sock'] is None:
                             endpoint = f"tcp://{mon['ip']}:{mon['port']}"
-                            log.debug("Connecting to monitoring module %s at %s", name, endpoint)
+                            log.debug(
+                                "Connecting to monitoring module %s at %s", name, endpoint)
                             mon['sock'] = onlutils.get_connection(endpoint)
-                            
-                            init_reply = onlutils.send_daq_cmd(mon['sock'], onlconsts.kQUERYMONITOR)
-                            
+
+                            init_reply = onlutils.send_daq_cmd(
+                                mon['sock'], onlconsts.kQUERYMONITOR)
+
                             if init_reply is None:
-                                log.warning("Module %s initialization timeout!", name)
+                                log.warning(
+                                    "Module %s initialization timeout!", name)
                                 try:
                                     mon['sock'].close()
                                 except:
@@ -292,12 +306,14 @@ def run_monitor():
                             try:
                                 trg_info = onlutils.send_daq_cmd(
                                     mon['sock'], onlconsts.kQUERYTRGINFO)
-                                
+
                                 if trg_info is None:
-                                    log.warning("Module %s TrgInfo timeout!", name)
+                                    log.warning(
+                                        "Module %s TrgInfo timeout!", name)
                                     raise Exception("Recv empty")
 
-                                n = run_stats[name]['n'] = trg_info.get("nevent", 0)
+                                n = run_stats[name]['n'] = trg_info.get(
+                                    "nevent", 0)
                                 t_ns = trg_info.get("trgtime", 0)
                                 t = run_stats[name]['t'] = t_ns / 1000000000.0
 
@@ -349,6 +365,6 @@ def run_monitor():
 
 
 if __name__ == '__main__':
-    api_thread = threading.Thread(target=handle_rc_requests, daemon=True)
+    api_thread = threading.Thread(target=handle_requests, daemon=True)
     api_thread.start()
     run_monitor()

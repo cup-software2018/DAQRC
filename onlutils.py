@@ -96,7 +96,7 @@ def get_connection(endpoint, sock_type=zmq.REQ):
     return sock
 
 
-def send_daq_cmd(sock, cmd_string, extra_data=None, timeout_ms=200):
+def send_daq_cmd(sock, cmd_string, extra_data=None, timeout_ms=2000):
     """
     Sends a JSON command and uses poll() to prevent GUI freezing.
     Returns parsed JSON or None if timeout/error occurs.
