@@ -320,16 +320,16 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
             if mode == 0:
                 sopt = '-t -r %d -n %s ' % (run_number, name)
-                dopt = '-d 0 -r %d -c %s -p %d' % (
+                dopt = '-d 0 -r %d -c %s -p %d ' % (
                     run_number, target_config, onlconsts.kOUTPUTSPLITTIME)
             elif mode == 2:
                 sopt = '-m -r %d -n %s ' % (run_number, name)
-                dopt = '-%s -d %d -c %s -r %d ' % (topt,
-                                                   dnum, target_config, run_number)
+                dopt = '-%s -d %d -c %s -r %d -q %d ' % (topt,
+                                                   dnum, target_config, run_number, onlconsts.kSTATSREPORTINTERVAL)
             else:
                 sopt = '-d -r %d -n %s ' % (run_number, name)
-                dopt = '-%s -d %d -c %s -r %d ' % (topt,
-                                                   dnum, target_config, run_number)
+                dopt = '-%s -d %d -c %s -r %d -q %d ' % (topt,
+                                                   dnum, target_config, run_number, onlconsts.kSTATSREPORTINTERVAL)
                 adc = name[0:4]
                 for dd in daqlist:
                     if dd[0] == 2 and adc in dd[2]:

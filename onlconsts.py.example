@@ -21,6 +21,7 @@ kRUNTYPELIST = ['', 'physics', 'calibration', 'test']
 
 kOUTPUTFILEFORMAT = 'hdf5' # hdf5 or root
 kOUTPUTSPLITTIME = 3600 # 1 hour for spliting output file
+kSTATSREPORTINTERVAL = 10 
 
 # ===========================================================
 # Do not modify from here!!! (Updated for DAQ Monitor refactoring)
