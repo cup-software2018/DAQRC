@@ -297,7 +297,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
             if mode == 0:
                 sopt = '-t -r %d -n %s ' % (run_number, name)
-                dopt = '-d 0 -r %d -c %s' % (run_number, target_config)
+                dopt = '-d 0 -r %d -c %s -p %d' % (run_number, target_config, onlconsts.kOUTPUTSPLITTIME)
             elif mode == 2:
                 sopt = '-m -r %d -n %s ' % (run_number, name)
                 dopt = '-%s -d %d -c %s -r %d ' % (topt,
