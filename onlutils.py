@@ -18,7 +18,6 @@ def get_logger(name, log_file=None):
     """
     logger = logging.getLogger(name)
 
-    # Prevent adding multiple handlers if the logger already exists
     if not logger.handlers:
         logger.setLevel(logging.DEBUG)
 
@@ -96,7 +95,7 @@ def get_connection(endpoint, sock_type=zmq.REQ):
     return sock
 
 
-def send_daq_cmd(sock, cmd_string, extra_data=None, timeout_ms=2000):
+def send_daq_cmd(sock, cmd_string, extra_data=None, timeout_ms=200):
     """
     Sends a JSON command and uses poll() to prevent GUI freezing.
     Returns parsed JSON or None if timeout/error occurs.
@@ -111,11 +110,7 @@ def send_daq_cmd(sock, cmd_string, extra_data=None, timeout_ms=2000):
     try:
         sock.send_json(req)
 
-        # Timeout check
         if sock.poll(timeout=timeout_ms) == 0:
-            # Keep it at the DEBUG level since frequent polling timeouts can spam the logs.
-            # log.debug("ZMQ poll timeout (%d ms) on command: %s",
-            #          timeout_ms, cmd_string)
             return None
 
         reply = sock.recv_json()
@@ -135,13 +130,11 @@ def query_runstate(endpoint, sock=None):
 
     reply = send_daq_cmd(sock, onlconsts.kQUERYDAQSTATUS)
 
-    # 1. Check if communication failed or status is not "ok"
     if reply is None or reply.get("status") != "ok":
         if sock:
             sock.close()
         return onlconsts.kDOWN, None
 
-    # 2. Extract the actual bitmask state using the "run_status" key
     run_status = reply.get("run_status", onlconsts.kDOWN)
 
     return run_status, sock
@@ -160,14 +153,10 @@ def run_ssh_cmd(cmd, host='localhost'):
                            stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE)
 
-    # communicate() safely waits for the process to finish and reads all streams,
-    # preventing potential deadlocks if the output buffers fill up.
     stdout_data, stderr_data = ssh.communicate()
 
-    # Check the actual exit status of the command instead of stdout
     if ssh.returncode != 0:
         error_msg = stderr_data.decode('utf-8').strip()
-        # Fallback to stdout if stderr is empty
         if not error_msg:
             error_msg = stdout_data.decode('utf-8').strip()
 
@@ -175,12 +164,10 @@ def run_ssh_cmd(cmd, host='localhost'):
                     host, ssh.returncode, error_msg)
         return False, error_msg
 
-    # If the command succeeded but produced no output, it is not an error
     if not stdout_data:
         log.debug("SSH command succeeded on %s but produced no stdout.", host)
         return True, []
 
-    # Properly decode bytes to string and split into lines safely
     decoded_output = stdout_data.decode('utf-8')
     result = [line for line in decoded_output.splitlines() if line]
 

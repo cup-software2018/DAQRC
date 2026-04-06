@@ -9,8 +9,10 @@ from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 from PyQt5.QtWidgets import *
 from rcui import Ui_MainWindow
+
 import onlconsts
 import onlutils
+from onlthreads import DAQStatePollerThread  # Import the new thread class
 
 # Initialize the RC logger
 log = onlutils.get_logger("RC", "/tmp/cupdaq_rc.log")
@@ -56,6 +58,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.ConfigFile = None
 
         self.RunState = onlconsts.kDOWN
+        # Used exclusively for GUI commands (Start, Stop, etc.)
         self.RunSocket = None
         self.OnThisRC = False
 
@@ -106,10 +109,30 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         # Launch the background monitor daemon if it's dead when RC starts
         self.check_and_start_monitor()
 
-        timer = QTimer(self)
-        timer.timeout.connect(self.update_runstate)
-        timer.setInterval(500)
-        timer.start()
+        # --- Background Poller Thread Setup ---
+        self.poller_thread = DAQStatePollerThread(self.daq_endpoint)
+        self.poller_thread.state_received.connect(self.on_state_received)
+        self.poller_thread.start()
+        # --------------------------------------
+
+    def closeEvent(self, event):
+        """Ensure threads and sockets are cleanly closed when exiting."""
+        log.info("Closing RC GUI and stopping background threads...")
+        if hasattr(self, 'poller_thread'):
+            self.poller_thread.stop()
+
+        if self.RunSocket:
+            self.RunSocket.close()
+        if self.MonitorSocket:
+            self.MonitorSocket.close()
+
+        event.accept()
+
+    def _get_run_socket(self):
+        """Helper to manage the command socket independently of the poller."""
+        if self.RunSocket is None:
+            self.RunSocket = onlutils.get_connection(self.daq_endpoint)
+        return self.RunSocket
 
     @pyqtSlot(str, str)
     def append_log(self, msg, level):
@@ -261,8 +284,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 yaml.dump(main_config, out_fp,
                           default_flow_style=None, sort_keys=False)
 
-            cmd = 'scp -q %s %s:%s' % (
-                merged_local_config, onlconsts.kDAQSERVER_IP, target_config)
+            cmd = 'scp -q %s %s:%s' % (merged_local_config,
+                                       onlconsts.kDAQSERVER_IP, target_config)
             os.system(cmd)
             log.info("Merged config SCP copied to target: %s", target_config)
 
@@ -297,7 +320,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
             if mode == 0:
                 sopt = '-t -r %d -n %s ' % (run_number, name)
-                dopt = '-d 0 -r %d -c %s -p %d' % (run_number, target_config, onlconsts.kOUTPUTSPLITTIME)
+                dopt = '-d 0 -r %d -c %s -p %d' % (
+                    run_number, target_config, onlconsts.kOUTPUTSPLITTIME)
             elif mode == 2:
                 sopt = '-m -r %d -n %s ' % (run_number, name)
                 dopt = '-%s -d %d -c %s -r %d ' % (topt,
@@ -329,7 +353,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                                          daq[1], onldaqdiropt + rawdatadiropt, daq[2])
                 log.info("Executing remote DAQ command via SSH on %s", daq[3])
 
-                # Check execution result and log error if failed
                 success, output = onlutils.run_ssh_cmd(cmd, daq[3])
                 if not success:
                     log.error("Execution failed on %s: %s", daq[3], output)
@@ -342,7 +365,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                                  tcb[1], onldaqdiropt + rawdatadiropt, tcb[2])
         log.info("Executing TCB remote command via SSH on %s", tcb[3])
 
-        # Check TCB execution result
         success, output = onlutils.run_ssh_cmd(cmd, tcb[3])
         if not success:
             log.error("TCB Execution failed on %s: %s", tcb[3], output)
@@ -355,7 +377,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
     def config_run(self):
         log.info("User requested CONFIG_RUN.")
         reply = onlutils.send_daq_cmd(
-            self.RunSocket, onlconsts.kCONFIGRUN, timeout_ms=2000)
+            self._get_run_socket(), onlconsts.kCONFIGRUN, timeout_ms=2000)
 
         if reply is None and self.RunSocket:
             self.RunSocket.close()
@@ -366,7 +388,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
     def start_run(self):
         log.info("User requested START_RUN.")
         reply = onlutils.send_daq_cmd(
-            self.RunSocket, onlconsts.kSTARTRUN, timeout_ms=1000)
+            self._get_run_socket(), onlconsts.kSTARTRUN, timeout_ms=1000)
 
         if reply is None and self.RunSocket:
             self.RunSocket.close()
@@ -382,7 +404,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
         log.info("User requested END_RUN.")
         reply = onlutils.send_daq_cmd(
-            self.RunSocket, onlconsts.kENDRUN, timeout_ms=1000)
+            self._get_run_socket(), onlconsts.kENDRUN, timeout_ms=1000)
 
         if reply is None and self.RunSocket:
             self.RunSocket.close()
@@ -408,19 +430,22 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 return
 
         log.warning("User requested FORCE EXIT.")
-        if self.RunSocket:
+        if self._get_run_socket():
             reply = onlutils.send_daq_cmd(
                 self.RunSocket, onlconsts.kEXIT, timeout_ms=1000)
             if reply is None:
                 self.RunSocket.close()
                 self.RunSocket = None
 
-    def update_runstate(self):
+    @pyqtSlot(int, dict)
+    def on_state_received(self, new_state, reply_dict):
+        """
+        Slot function called by the background poller thread.
+        This runs on the GUI thread, so it's 100% safe to update UI elements here.
+        """
         old_state = self.RunState
-        self.RunState, self.RunSocket = onlutils.query_runstate(
-            self.daq_endpoint, self.RunSocket)
+        self.RunState = new_state
 
-        # Log only when the state changes to avoid log spamming every 500ms
         if old_state != self.RunState:
             raw_val = onlutils.get_state(self.RunState)
             state_str = onlconsts.kDAQSTATE[raw_val] if raw_val < len(
@@ -470,11 +495,10 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
                 if not self.EndTime:
                     reply = onlutils.send_daq_cmd(
-                        self.RunSocket, onlconsts.kQUERYRUNINFO)
+                        self._get_run_socket(), onlconsts.kQUERYRUNINFO, timeout_ms=1000)
                     if reply and "end_time" in reply:
                         self.EndTime = reply["end_time"]
                     elif reply is None:
-                        # Close the REQ socket on timeout to ensure it gets recreated in the next cycle
                         if self.RunSocket:
                             self.RunSocket.close()
                             self.RunSocket = None
