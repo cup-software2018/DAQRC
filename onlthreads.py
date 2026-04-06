@@ -1,5 +1,5 @@
 import time
-from PyQt5.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 import onlutils
 import onlconsts
 
@@ -7,11 +7,11 @@ import onlconsts
 class DAQStatePollerThread(QThread):
     """
     Background thread to poll DAQ state continuously.
-    Prevents the PyQt GUI from freezing during ZeroMQ timeouts.
+    Prevents the PySide6 UI from freezing during ZeroMQ timeouts.
     """
     # Signal to emit state back to the Main GUI thread safely
     # Signature: (run_state_integer, reply_dictionary)
-    state_received = pyqtSignal(int, dict)
+    state_received = Signal(int, dict)
 
     def __init__(self, endpoint, parent=None):
         super().__init__(parent)

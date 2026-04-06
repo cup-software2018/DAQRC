@@ -5,9 +5,9 @@ import json
 import yaml
 import logging
 from datetime import datetime
-from PyQt5.QtCore import *
-from PyQt5.QtGui import *
-from PyQt5.QtWidgets import *
+from PySide6.QtCore import Signal, Slot, Qt, QObject, QTimer
+from PySide6.QtGui import QFont, QColor, QScreen, QGuiApplication
+from PySide6.QtWidgets import QMainWindow, QApplication, QVBoxLayout, QHBoxLayout, QMessageBox, QFileDialog, QTextEdit
 from rcui import Ui_MainWindow
 
 import onlconsts
@@ -28,7 +28,7 @@ def sortfunc(e):
 
 
 class LogSignaller(QObject):
-    new_log = pyqtSignal(str, str)  # message, levelname
+    new_log = Signal(str, str)  # message, levelname
 
 
 class GuiLogHandler(logging.Handler):
@@ -134,7 +134,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             self.RunSocket = onlutils.get_connection(self.daq_endpoint)
         return self.RunSocket
 
-    @pyqtSlot(str, str)
+    @Slot(str, str)
     def append_log(self, msg, level):
         """Slot to receive log messages and display them in the LogViewer with colors."""
         color = "black"
@@ -437,7 +437,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 self.RunSocket.close()
                 self.RunSocket = None
 
-    @pyqtSlot(int, dict)
+    @Slot(int, dict)
     def on_state_received(self, new_state, reply_dict):
         """
         Slot function called by the background poller thread.
@@ -630,7 +630,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
     def center(self):
         qr = self.frameGeometry()
-        cp = QDesktopWidget().availableGeometry().center()
+        screen = QGuiApplication.primaryScreen()
+        cp = screen.availableGeometry().center()
         qr.moveCenter(cp)
         self.move(qr.topLeft())
 

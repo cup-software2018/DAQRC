@@ -1,6 +1,6 @@
 # CUP DAQ Run Control System (DAQRC)
 
-This project is a Data Acquisition (DAQ) control and real-time monitoring system for the CUP experiment. It utilizes a decoupled architecture, separating the PyQt5-based GUI frontend (`rc.py`) from a background monitoring daemon (`daq_monitor.py`) that handles SQLite database logging and hardware status polling.
+This project is a Data Acquisition (DAQ) control and real-time monitoring system for the CUP experiment. It utilizes a decoupled architecture, separating the PySide6-based GUI frontend (`rc.py`) from a background monitoring daemon (`daq_monitor.py`) that handles SQLite database logging and hardware status polling.
 
 ## 🌟 Core Architecture (Frontend-Backend Separation)
 
