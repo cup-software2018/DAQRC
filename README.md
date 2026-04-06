@@ -66,7 +66,22 @@ pkill -f 'daq_monitor.py'
 *   `onlthreads.py`: Threading helpers for non-blocking GUI polling.
 *   `onlutils.py`: Shared utilities for ZMQ, SSH, and logging.
 *   `onlconsts.py`: System constants and configurations.
-*   `rcui.py` / `rc.ui`: PyQt5 UI layout definitions.
+*   `rcui.py` / `rc.ui`: PySide6 UI layout definitions.
 *   `create_runcatalog_db.py`: Script to initialize the SQLite database schema.
 *   `/tmp/cupdaq_rc.log`: Frontend logs.
 *   `/tmp/cupdaq_monitor_daemon.log`: Backend monitor logs.
+
+## 🛠 Troubleshooting
+
+**Q. I get a `qt.qpa.plugin: Could not load the Qt platform plugin "xcb"` error.**
+*   **Cause**: PySide6 (Qt 6.5+) requires the `xcb-cursor` library, which is not always pre-installed on Linux distributions.
+*   **Solution**: Install the missing dependency using your package manager:
+    `sudo dnf install xcb-util-cursor`
+
+**Q. I get a `ModuleNotFoundError: No module named 'onlconsts'` error.**
+*   **Cause**: The configuration file `onlconsts.py` has not been created yet.
+*   **Solution**: Copy the example file and edit it: `cp onlconsts.py.example onlconsts.py`.
+
+**Q. I get an `[Errno 111] Connection refused` error when RC starts.**
+*   **Cause**: The `daq_monitor.py` daemon may have failed to start or is already holding the port.
+*   **Solution**: Check `/tmp/cupdaq_monitor_daemon.log` for logs, or force kill potential zombies using `pkill -9 -f 'daq_monitor.py'`.
