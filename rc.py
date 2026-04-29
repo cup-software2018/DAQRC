@@ -430,7 +430,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 self.RunSocket.close()
                 self.RunSocket = None
 
-    @Slot(dict)
+    @Slot(object)
     def on_stats_received(self, stats):
         """
         Slot called by MonitorPollerThread with GET_STATS result.
@@ -447,7 +447,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
         self.update_run_stats_display()
 
-    @Slot(int, dict)
+    @Slot(int, object)
     def on_state_received(self, new_state, reply_dict):
         """
         Slot called by DAQStatePollerThread.

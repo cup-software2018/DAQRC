@@ -9,7 +9,7 @@ class DAQStatePollerThread(QThread):
     Background thread to poll DAQ state continuously.
     Prevents the PySide6 UI from freezing during ZeroMQ timeouts.
     """
-    state_received = Signal(int, dict)
+    state_received = Signal(int, object)
 
     def __init__(self, endpoint, parent=None):
         super().__init__(parent)
@@ -52,7 +52,7 @@ class MonitorPollerThread(QThread):
     Prevents GUI freeze during ZeroMQ timeouts on monitor communication.
     Note: daq_monitor uses {"cmd": ...} format, not {"command": ...}.
     """
-    stats_received = Signal(dict)
+    stats_received = Signal(object)
 
     def __init__(self, monitor_endpoint, parent=None):
         super().__init__(parent)
