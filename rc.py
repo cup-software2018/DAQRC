@@ -431,11 +431,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 self.RunSocket = None
 
     def on_stats_received(self, stats):
-        """
-        Slot called by MonitorPollerThread with GET_STATS result.
-        Runs on GUI thread via signal/slot mechanism.
-        """
         if not stats:
+            self.update_run_stats_display()  # stats 없어도 display는 업데이트
             return
 
         self.RunStats = stats.get("RunStats", {})
@@ -447,12 +444,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.update_run_stats_display()
 
     def on_state_received(self, new_state, reply_dict):
-        """
-        Slot called by DAQStatePollerThread.
-        Runs on GUI thread via signal/slot mechanism.
-        Only handles state transitions and UI updates.
-        Monitor communication is handled by MonitorPollerThread.
-        """
         old_state = self.RunState
         self.RunState = new_state
 
@@ -468,14 +459,12 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
         self.set_runstate(self.RunState)
 
-        # Enable monitor polling when running or ended
         if onlutils.check_state(self.RunState, onlconsts.kRUNNING) or \
-           onlutils.check_state(self.RunState, onlconsts.kRUNENDED):
+                onlutils.check_state(self.RunState, onlconsts.kRUNENDED):
             self.monitor_poller_thread.enable()
         else:
             self.monitor_poller_thread.disable()
 
-        # Sync run info from monitor when not on this RC
         if not self.OnThisRC and self.RunState != onlconsts.kDOWN:
             resp = self.send_monitor_cmd({"cmd": "SYNC_LATEST"})
             if resp and "runnum" in resp:
@@ -498,7 +487,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 log.info(
                     "Synced latest run details from monitor: RunNum %06d", self.RunNumber)
 
-        # GOODRUN tagging on kRUNENDED
         if onlutils.check_state(self.RunState, onlconsts.kRUNENDED):
             if not self._is_asking_goodrun:
                 self._is_asking_goodrun = True
@@ -536,6 +524,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                     "final_stats": self.RunStats
                 }
                 self.send_monitor_cmd(req)
+
+        self.update_run_stats_display()
 
     def update_run_stats_display(self):
         """Update the RunStats text display. Called from on_stats_received."""
