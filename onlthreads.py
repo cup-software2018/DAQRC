@@ -40,6 +40,9 @@ class DAQStatePollerThread(QThread):
 
     def stop(self):
         self.active = False
+        if self.sock:
+            self.sock.close()
+            self.sock = None
         self.wait()
 
 
@@ -47,6 +50,7 @@ class MonitorPollerThread(QThread):
     """
     Background thread to poll monitor daemon for run stats.
     Prevents GUI freeze during ZeroMQ timeouts on monitor communication.
+    Note: daq_monitor uses {"cmd": ...} format, not {"command": ...}.
     """
     stats_received = Signal(dict)
 
@@ -63,15 +67,22 @@ class MonitorPollerThread(QThread):
                 if self.sock is None:
                     self.sock = onlutils.get_connection(self.monitor_endpoint)
 
-                reply = onlutils.send_cmd(self.sock, {"cmd": "GET_STATS"})
+                try:
+                    self.sock.send_json({"cmd": "GET_STATS"})
 
-                if reply is None:
+                    if self.sock.poll(timeout=1000) == 0:
+                        self.sock.close()
+                        self.sock = None
+                        self.stats_received.emit({})
+                    else:
+                        reply = self.sock.recv_json()
+                        self.stats_received.emit(reply)
+
+                except Exception as e:
                     if self.sock:
                         self.sock.close()
                         self.sock = None
                     self.stats_received.emit({})
-                else:
-                    self.stats_received.emit(reply)
 
             self.msleep(1000)
 
@@ -83,4 +94,7 @@ class MonitorPollerThread(QThread):
 
     def stop(self):
         self.active = False
+        if self.sock:
+            self.sock.close()
+            self.sock = None
         self.wait()
