@@ -1,7 +1,6 @@
 import os
 import sys
 import time
-import json
 import yaml
 import logging
 from datetime import datetime
@@ -12,23 +11,17 @@ from rcui import Ui_MainWindow
 
 import onlconsts
 import onlutils
-from onlthreads import DAQStatePollerThread  # Import the new thread class
+from onlthreads import DAQStatePollerThread, MonitorPollerThread
 
-# Initialize the RC logger
 log = onlutils.get_logger("RC", "/tmp/cupdaq_rc.log")
 
 
 def sortfunc(e):
-    # Ensure TCB(mode=0) gets sorted to the front before moving to the end
     return e[0]
-
-# -------------------------------------------------------------------
-# Custom Logging Handler to redirect logs to PyQt5 GUI securely
-# -------------------------------------------------------------------
 
 
 class LogSignaller(QObject):
-    new_log = Signal(str, str)  # message, levelname
+    new_log = Signal(str, str)
 
 
 class GuiLogHandler(logging.Handler):
@@ -41,7 +34,6 @@ class GuiLogHandler(logging.Handler):
     def emit(self, record):
         msg = self.format(record)
         self.signaller.new_log.emit(msg, record.levelname)
-# -------------------------------------------------------------------
 
 
 class MainWindow(QMainWindow, Ui_MainWindow):
@@ -58,7 +50,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.ConfigFile = None
 
         self.RunState = onlconsts.kDOWN
-        # Used exclusively for GUI commands (Start, Stop, etc.)
         self.RunSocket = None
         self.OnThisRC = False
 
@@ -67,6 +58,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.EndTime = 0
         self.MonNames = []
         self.RunStats = {}
+
+        self._is_asking_goodrun = False
 
         self.center()
         self.RunTypeConfig.addItems(onlconsts.kRUNTYPELIST)
@@ -89,11 +82,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.ExitButton.clicked.connect(self.exit_run)
 
         self.daq_endpoint = onlconsts.kDAQSERVER_ADDR
-
-        # ZMQ persistent socket for DAQ Monitor daemon
         self.MonitorSocket = None
 
-        # --- GUI Logging Setup ---
         self.log_signaller = LogSignaller()
         self.log_signaller.new_log.connect(self.append_log)
 
@@ -102,24 +92,29 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
         log.addHandler(self.gui_handler)
         onlutils.log.addHandler(self.gui_handler)
-        # -------------------------
 
         log.info("Starting Run Control GUI...")
 
-        # Launch the background monitor daemon if it's dead when RC starts
         self.check_and_start_monitor()
 
-        # --- Background Poller Thread Setup ---
         self.poller_thread = DAQStatePollerThread(self.daq_endpoint)
         self.poller_thread.state_received.connect(self.on_state_received)
         self.poller_thread.start()
-        # --------------------------------------
+
+        self.monitor_poller_thread = MonitorPollerThread(
+            onlconsts.kMONITOR_ADDR)
+        self.monitor_poller_thread.stats_received.connect(
+            self.on_stats_received)
+        self.monitor_poller_thread.start()
 
     def closeEvent(self, event):
-        """Ensure threads and sockets are cleanly closed when exiting."""
         log.info("Closing RC GUI and stopping background threads...")
+
         if hasattr(self, 'poller_thread'):
             self.poller_thread.stop()
+
+        if hasattr(self, 'monitor_poller_thread'):
+            self.monitor_poller_thread.stop()
 
         if self.RunSocket:
             self.RunSocket.close()
@@ -129,19 +124,17 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         event.accept()
 
     def _get_run_socket(self):
-        """Helper to manage the command socket independently of the poller."""
         if self.RunSocket is None:
             self.RunSocket = onlutils.get_connection(self.daq_endpoint)
         return self.RunSocket
 
     @Slot(str, str)
     def append_log(self, msg, level):
-        """Slot to receive log messages and display them in the LogViewer with colors."""
         color = "black"
         if level in ["ERROR", "CRITICAL"]:
             color = "red"
         elif level == "WARNING":
-            color = "#FF8C00"  # Dark Orange
+            color = "#FF8C00"
         elif level == "DEBUG":
             color = "gray"
         elif level == "INFO":
@@ -184,8 +177,9 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         return reply
 
     def load_config(self):
-        result = QFileDialog.getOpenFileName(self, 'Load Configuration File', onlconsts.kDEFAULTCONFIGDIR,
-                                             'Configuration File (*.yml);;All Files (*)')
+        result = QFileDialog.getOpenFileName(
+            self, 'Load Configuration File', onlconsts.kDEFAULTCONFIGDIR,
+            'Configuration File (*.yml);;All Files (*)')
         self.ConfigFile = str(result[0])
         if self.ConfigFile:
             configfile = os.path.basename(self.ConfigFile)
@@ -224,6 +218,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.EndTime = 0
         self.RunStatsTextEdit.clear()
         self.LogViewer.clear()
+        self._is_asking_goodrun = False
 
         req = {
             "cmd": "BOOT_RUN",
@@ -324,12 +319,12 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                     run_number, target_config, onlconsts.kOUTPUTSPLITTIME)
             elif mode == 2:
                 sopt = '-m -r %d -n %s ' % (run_number, name)
-                dopt = '-%s -d %d -c %s -r %d -q %d ' % (topt,
-                                                   dnum, target_config, run_number, onlconsts.kSTATSREPORTINTERVAL)
+                dopt = '-%s -d %d -c %s -r %d -q %d ' % (
+                    topt, dnum, target_config, run_number, onlconsts.kSTATSREPORTINTERVAL)
             else:
                 sopt = '-d -r %d -n %s ' % (run_number, name)
-                dopt = '-%s -d %d -c %s -r %d -q %d ' % (topt,
-                                                   dnum, target_config, run_number, onlconsts.kSTATSREPORTINTERVAL)
+                dopt = '-%s -d %d -c %s -r %d -q %d ' % (
+                    topt, dnum, target_config, run_number, onlconsts.kSTATSREPORTINTERVAL)
                 adc = name[0:4]
                 for dd in daqlist:
                     if dd[0] == 2 and adc in dd[2]:
@@ -348,11 +343,9 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         for daq in optlist:
             mode = daq[0]
             if mode > 0:
-                cmd = self.Bindir + \
-                    '%s %s%s -o "%s"' % (onlconsts.kEXESCRIPT,
-                                         daq[1], onldaqdiropt + rawdatadiropt, daq[2])
+                cmd = self.Bindir + '%s %s%s -o "%s"' % (
+                    onlconsts.kEXESCRIPT, daq[1], onldaqdiropt + rawdatadiropt, daq[2])
                 log.info("Executing remote DAQ command via SSH on %s", daq[3])
-
                 success, output = onlutils.run_ssh_cmd(cmd, daq[3])
                 if not success:
                     log.error("Execution failed on %s: %s", daq[3], output)
@@ -360,11 +353,9 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         time.sleep(1)
 
         tcb = optlist[-1]
-        cmd = self.Bindir + \
-            '%s %s%s -o "%s"' % (onlconsts.kEXESCRIPT,
-                                 tcb[1], onldaqdiropt + rawdatadiropt, tcb[2])
+        cmd = self.Bindir + '%s %s%s -o "%s"' % (
+            onlconsts.kEXESCRIPT, tcb[1], onldaqdiropt + rawdatadiropt, tcb[2])
         log.info("Executing TCB remote command via SSH on %s", tcb[3])
-
         success, output = onlutils.run_ssh_cmd(cmd, tcb[3])
         if not success:
             log.error("TCB Execution failed on %s: %s", tcb[3], output)
@@ -372,6 +363,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.OnThisRC = True
         self.StartTime = 0
         self.EndTime = 0
+        self.BootButton.setEnabled(False)
+        self.BootButton.setStyleSheet("background-color: yellow")
         log.info("Boot sequence completed.")
 
     def config_run(self):
@@ -437,11 +430,30 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 self.RunSocket.close()
                 self.RunSocket = None
 
+    @Slot(dict)
+    def on_stats_received(self, stats):
+        """
+        Slot called by MonitorPollerThread with GET_STATS result.
+        Runs on GUI thread via signal/slot mechanism.
+        """
+        if not stats:
+            return
+
+        self.RunStats = stats.get("RunStats", {})
+        self.SubRunNumber = stats.get("SubRunNumber", 0)
+        self.StartTime = stats.get("StartTime", 0)
+        self.MonNames = stats.get("MonNames", [])
+        self.EndTime = stats.get("EndTime", 0)
+
+        self.update_run_stats_display()
+
     @Slot(int, dict)
     def on_state_received(self, new_state, reply_dict):
         """
-        Slot function called by the background poller thread.
-        This runs on the GUI thread, so it's 100% safe to update UI elements here.
+        Slot called by DAQStatePollerThread.
+        Runs on GUI thread via signal/slot mechanism.
+        Only handles state transitions and UI updates.
+        Monitor communication is handled by MonitorPollerThread.
         """
         old_state = self.RunState
         self.RunState = new_state
@@ -458,6 +470,14 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
         self.set_runstate(self.RunState)
 
+        # Enable monitor polling when running or ended
+        if onlutils.check_state(self.RunState, onlconsts.kRUNNING) or \
+           onlutils.check_state(self.RunState, onlconsts.kRUNENDED):
+            self.monitor_poller_thread.enable()
+        else:
+            self.monitor_poller_thread.disable()
+
+        # Sync run info from monitor when not on this RC
         if not self.OnThisRC and self.RunState != onlconsts.kDOWN:
             resp = self.send_monitor_cmd({"cmd": "SYNC_LATEST"})
             if resp and "runnum" in resp:
@@ -480,17 +500,9 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 log.info(
                     "Synced latest run details from monitor: RunNum %06d", self.RunNumber)
 
-        if onlutils.check_state(self.RunState, onlconsts.kRUNNING) or onlutils.check_state(self.RunState, onlconsts.kRUNENDED):
-            resp = self.send_monitor_cmd({"cmd": "GET_STATS"})
-            if resp:
-                self.RunStats = resp.get("RunStats", {})
-                self.SubRunNumber = resp.get("SubRunNumber", 0)
-                self.StartTime = resp.get("StartTime", 0)
-                self.MonNames = resp.get("MonNames", [])
-                self.EndTime = resp.get("EndTime", 0)
-
+        # GOODRUN tagging on kRUNENDED
         if onlutils.check_state(self.RunState, onlconsts.kRUNENDED):
-            if not getattr(self, '_is_asking_goodrun', False):
+            if not self._is_asking_goodrun:
                 self._is_asking_goodrun = True
 
                 if not self.EndTime:
@@ -527,6 +539,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 }
                 self.send_monitor_cmd(req)
 
+    def update_run_stats_display(self):
+        """Update the RunStats text display. Called from on_stats_received."""
         curtime = time.strftime("%Y-%m-%d %H:%M:%S")
         stime = datetime.fromtimestamp(self.StartTime).strftime(
             "%Y-%m-%d %H:%M:%S") if self.StartTime > 0 else ''

@@ -9,8 +9,6 @@ class DAQStatePollerThread(QThread):
     Background thread to poll DAQ state continuously.
     Prevents the PySide6 UI from freezing during ZeroMQ timeouts.
     """
-    # Signal to emit state back to the Main GUI thread safely
-    # Signature: (run_state_integer, reply_dictionary)
     state_received = Signal(int, dict)
 
     def __init__(self, endpoint, parent=None):
@@ -20,21 +18,14 @@ class DAQStatePollerThread(QThread):
         self.sock = None
 
     def run(self):
-        """
-        Main loop of the background thread.
-        Never manipulate GUI elements directly from here!
-        """
         while self.active:
             if self.sock is None:
                 self.sock = onlutils.get_connection(self.endpoint)
 
-            # Polling DAQ status with a generous 1000ms timeout
-            # It will not freeze the GUI because it runs in this background thread.
             reply = onlutils.send_daq_cmd(
                 self.sock, onlconsts.kQUERYDAQSTATUS, timeout_ms=1000)
 
             if reply is None or reply.get("status") != "ok":
-                # Lazy Pirate Pattern: Destroy and recreate socket on timeout
                 if self.sock:
                     self.sock.close()
                     self.sock = None
@@ -44,13 +35,52 @@ class DAQStatePollerThread(QThread):
                 current_state = reply.get("run_status", onlconsts.kDOWN)
                 reply_dict = reply
 
-            # Emit the result safely to the Main Thread
             self.state_received.emit(current_state, reply_dict)
-
-            # Wait 500ms before the next poll
             self.msleep(500)
 
     def stop(self):
-        """Gracefully terminate the polling thread."""
+        self.active = False
+        self.wait()
+
+
+class MonitorPollerThread(QThread):
+    """
+    Background thread to poll monitor daemon for run stats.
+    Prevents GUI freeze during ZeroMQ timeouts on monitor communication.
+    """
+    stats_received = Signal(dict)
+
+    def __init__(self, monitor_endpoint, parent=None):
+        super().__init__(parent)
+        self.monitor_endpoint = monitor_endpoint
+        self.active = True
+        self.sock = None
+        self.polling_enabled = False
+
+    def run(self):
+        while self.active:
+            if self.polling_enabled:
+                if self.sock is None:
+                    self.sock = onlutils.get_connection(self.monitor_endpoint)
+
+                reply = onlutils.send_cmd(self.sock, {"cmd": "GET_STATS"})
+
+                if reply is None:
+                    if self.sock:
+                        self.sock.close()
+                        self.sock = None
+                    self.stats_received.emit({})
+                else:
+                    self.stats_received.emit(reply)
+
+            self.msleep(1000)
+
+    def enable(self):
+        self.polling_enabled = True
+
+    def disable(self):
+        self.polling_enabled = False
+
+    def stop(self):
         self.active = False
         self.wait()
