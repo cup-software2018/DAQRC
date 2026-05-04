@@ -80,6 +80,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.StartButton.clicked.connect(self.start_run)
         self.EndButton.clicked.connect(self.end_run)
         self.ExitButton.clicked.connect(self.exit_run)
+        self.ExitButton.setEnabled(False)
 
         self.daq_endpoint = onlconsts.kDAQSERVER_ADDR
         self.MonitorSocket = None
@@ -578,6 +579,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             self.RunDescConfig.setEnabled(False)
             self.ConfigFileButton.setEnabled(False)
 
+        self.ExitButton.setEnabled(False)
+
         if state == onlconsts.kDOWN:
             self.BootButton.setEnabled(True)
             self.BootButton.setStyleSheet("background-color: none")
@@ -587,17 +590,18 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             self.StartButton.setStyleSheet("background-color: none")
             self.EndButton.setEnabled(False)
             self.EndButton.setStyleSheet("background-color: none")
-            self.ExitButton.setEnabled(True)
         elif onlutils.check_state(self.RunState, onlconsts.kBOOTED):
             self.BootButton.setEnabled(False)
             self.BootButton.setStyleSheet("background-color: blue")
             self.ConfigButton.setEnabled(True)
+            self.ExitButton.setEnabled(True)
         elif onlutils.check_state(self.RunState, onlconsts.kCONFIGURED):
             self.BootButton.setEnabled(False)
             self.BootButton.setStyleSheet("background-color: none")
             self.ConfigButton.setEnabled(False)
             self.ConfigButton.setStyleSheet("background-color: blue")
             self.StartButton.setEnabled(True)
+            self.ExitButton.setEnabled(True)
         elif onlutils.check_state(self.RunState, onlconsts.kRUNNING):
             self.BootButton.setEnabled(False)
             self.ConfigButton.setEnabled(False)
@@ -605,6 +609,13 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             self.StartButton.setEnabled(False)
             self.StartButton.setStyleSheet("background-color: blue")
             self.EndButton.setEnabled(True)
+        elif onlutils.check_state(self.RunState, onlconsts.kRUNENDING):
+            self.BootButton.setEnabled(False)
+            self.ConfigButton.setEnabled(False)
+            self.StartButton.setEnabled(False)
+            self.StartButton.setStyleSheet("background-color: none")
+            self.EndButton.setEnabled(False)
+            self.EndButton.setStyleSheet("background-color: yellow")
         elif onlutils.check_state(self.RunState, onlconsts.kRUNENDED):
             self.BootButton.setEnabled(False)
             self.ConfigButton.setEnabled(False)
@@ -619,6 +630,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             self.StartButton.setStyleSheet("background-color: none")
             self.EndButton.setEnabled(False)
             self.EndButton.setStyleSheet("background-color: blue")
+            self.ExitButton.setEnabled(True)
 
         if onlutils.check_error(state):
             self.BootButton.setEnabled(False)
@@ -629,6 +641,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             self.StartButton.setStyleSheet("background-color: red")
             self.EndButton.setEnabled(False)
             self.EndButton.setStyleSheet("background-color: red")
+            self.ExitButton.setEnabled(True)
 
     def center(self):
         qr = self.frameGeometry()

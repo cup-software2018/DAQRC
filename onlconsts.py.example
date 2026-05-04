@@ -49,10 +49,11 @@ kDOWN = 0
 kBOOTED = 1
 kCONFIGURED = 2
 kRUNNING = 3
-kRUNENDED = 4
-kPROCENDED = 5
-kWARNING = 6
-kERROR = 7
+kRUNENDING = 4
+kRUNENDED = 5
+kPROCENDED = 6
+kWARNING = 7
+kERROR = 8
 
 kDAQSTATE = ['Down', 'Booted', 'Configured',
-             'Running', 'RunEnded', 'ProcEnded', 'Warning', 'Error']
+             'Running', 'RunEnding', 'RunEnded', 'ProcEnded', 'Warning', 'Error']
