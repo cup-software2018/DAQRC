@@ -212,6 +212,9 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             log.info("BOOT_RUN cancelled by user.")
             return
 
+        self.BootButton.setEnabled(False)
+        self.BootButton.setStyleSheet("background-color: yellow")
+
         self.RunStats.clear()
         self.MonNames.clear()
         self.SubRunNumber = 0
@@ -364,8 +367,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.OnThisRC = True
         self.StartTime = 0
         self.EndTime = 0
-        self.BootButton.setEnabled(False)
-        self.BootButton.setStyleSheet("background-color: yellow")
         log.info("Boot sequence completed.")
 
     def config_run(self):
@@ -408,7 +409,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
     def exit_run(self):
         is_safe_state = (
-            self.RunState in (onlconsts.kDOWN, onlconsts.kPROCENDED) or
+            self.RunState == onlconsts.kDOWN or
+            onlutils.check_state(self.RunState, onlconsts.kPROCENDED) or
             onlutils.check_state(self.RunState, onlconsts.kRUNENDED)
         )
         if not is_safe_state:
@@ -609,13 +611,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             self.StartButton.setEnabled(False)
             self.StartButton.setStyleSheet("background-color: blue")
             self.EndButton.setEnabled(True)
-        elif onlutils.check_state(self.RunState, onlconsts.kRUNENDING):
-            self.BootButton.setEnabled(False)
-            self.ConfigButton.setEnabled(False)
-            self.StartButton.setEnabled(False)
-            self.StartButton.setStyleSheet("background-color: none")
-            self.EndButton.setEnabled(False)
-            self.EndButton.setStyleSheet("background-color: yellow")
         elif onlutils.check_state(self.RunState, onlconsts.kRUNENDED):
             self.BootButton.setEnabled(False)
             self.ConfigButton.setEnabled(False)
