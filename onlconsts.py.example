@@ -8,9 +8,11 @@ kDAQSERVER_ADDR = 'tcp://%s:%d' % (kDAQSERVER_IP, kDAQSERVER_PORT)
 # If RC is running on same server with DAQ
 kISREMOTEDAQ = False
 
-# Directories at DAQ server
-kONLDAQ_DIR = '/opt/cupdaq'  # Set to actual directory
-kRAWDATA_DIR = '/data'       # Set to actual directory
+# Full path to executedaq.sh on the DAQ server
+kEXECUTEDAQ = '/opt/cupdaq/bin/executedaq.sh'
+
+# Data output directory on the DAQ server
+kRAWDATA_DIR = '/data'
 
 # Run catalog db file should be in same server with RC
 kRUNCATALOGDBFILE = 'runcatalog.db'
@@ -27,7 +29,7 @@ kOUTPUTSPLITTIME = 3600 # 1 hour for spliting output file
 # Do not modify from here!!!
 # ===========================================================
 
-kSTATSREPORTINTERVAL = 10 # for influxdb
+kSTATSREPORTINTERVAL = 10 # for update runcatalog
 
 # DAQ Monitor Server (daqmon_server.py) settings
 kDAQMON_LOG_FILE         = '/tmp/cupdaq_daqmon_server.log'
@@ -42,7 +44,6 @@ kDAQMON_CMD_ADDR = 'tcp://%s:%d' % (kDAQMON_IP, kDAQMON_CMD_PORT)
 kDAQMON_PUB_PORT = 7031
 kDAQMON_PUB_ADDR = 'tcp://%s:%d' % (kDAQMON_IP, kDAQMON_PUB_PORT)
 
-kEXESCRIPT = 'executedaq.sh'
 
 # Commands (Updated for JSON payload)
 kCONFIGRUN = "kCONFIGRUN"

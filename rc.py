@@ -87,7 +87,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         super().__init__(*args, **kwargs)
         self.setupUi(self)
 
-        self.Bindir = onlconsts.kONLDAQ_DIR + '/bin/'
+        self.Executedaq = onlconsts.kEXECUTEDAQ
 
         self.RunNumber = 0
         self.Shift = None
@@ -279,7 +279,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
         run_number = self.RunNumber
         config_file = self.ConfigFile
-        onldaq_dir = onlconsts.kONLDAQ_DIR
         rawdata_dir = onlconsts.kRAWDATA_DIR
 
         target_config = '%s/CONFIG/%06d.yml' % (rawdata_dir, run_number)
@@ -387,14 +386,13 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         optlist.sort(key=sortfunc)
         optlist.append(optlist.pop(0))
 
-        onldaqdiropt = '--onldaqdir=%s ' % onldaq_dir
         rawdatadiropt = '--rawdatadir=%s ' % rawdata_dir
 
         for daq in optlist:
             mode = daq[0]
             if mode > 0:
-                cmd = self.Bindir + '%s %s%s -o "%s"' % (
-                    onlconsts.kEXESCRIPT, daq[1], onldaqdiropt + rawdatadiropt, daq[2])
+                cmd = '%s %s%s -o "%s"' % (
+                    self.Executedaq, daq[1], rawdatadiropt, daq[2])
                 log.info("Executing remote DAQ command via SSH on %s", daq[3])
                 success, output = onlutils.run_ssh_cmd(cmd, daq[3])
                 if not success:
@@ -403,8 +401,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         time.sleep(1)
 
         tcb = optlist[-1]
-        cmd = self.Bindir + '%s %s%s -o "%s"' % (
-            onlconsts.kEXESCRIPT, tcb[1], onldaqdiropt + rawdatadiropt, tcb[2])
+        cmd = '%s %s%s -o "%s"' % (
+            self.Executedaq, tcb[1], rawdatadiropt, tcb[2])
         log.info("Executing TCB remote command via SSH on %s", tcb[3])
         success, output = onlutils.run_ssh_cmd(cmd, tcb[3])
         if not success:
