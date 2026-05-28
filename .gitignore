@@ -2,5 +2,6 @@
 /.vscode/
 /*.config
 /onlconsts.py
+/executedaq.sh
 /runcatalog.db
 /__pycache__

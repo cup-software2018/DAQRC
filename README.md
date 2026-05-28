@@ -39,7 +39,11 @@ daqmon.py  ──── REQ ────►  daqmon_server.py   GET_SERVER_HEALT
 
 ### `daqmon.py` — InfluxDB Reporter (Telegraf exec plugin)
 
-## Configuration (`onlconsts.py`)
+## Configuration
+
+Two files must be created from their examples before running the system.
+
+### `onlconsts.py`
 
 ```bash
 cp onlconsts.py.example onlconsts.py
@@ -51,13 +55,34 @@ Key variables to set:
 |---|---|
 | `kDAQSERVER_IP` | TCB IP address |
 | `kDAQSERVER_PORT` | TCB ZMQ port (default 7100) |
-| `kONLDAQ_DIR` | DAQ software directory on the server |
+| `kEXECUTEDAQ` | Full path to `executedaq.sh` on the DAQ server |
 | `kRAWDATA_DIR` | Output data directory (RAW, LOG, CONFIG) |
 | `kRUNCATALOGDBFILE` | Path to `runcatalog.db` |
 | `kDAQMON_IP` | daqmon_server host (default localhost) |
 | `kDAQMON_CMD_PORT` | Command interface port (default 7030) |
 | `kDAQMON_PUB_PORT` | Telemetry broadcast port (default 7031) |
 | `kSTATSREPORTINTERVAL` | DB write interval in seconds (default 10) |
+
+### `executedaq.sh`
+
+```bash
+cp executedaq.sh.example executedaq.sh
+```
+
+Edit the **Environment Setup** section to source ROOT and CUPDAQ for your site:
+
+```bash
+# =============================================================================
+# Environment Setup — modify for your site
+# =============================================================================
+source /path/to/root/bin/thisroot.sh
+source /path/to/cupdaq/setup_cupdaq.sh
+# =============================================================================
+```
+
+Deploy the customized `executedaq.sh` to each DAQ server's bin directory (the path specified in `kEXECUTEDAQ`).
+
+> Both `onlconsts.py` and `executedaq.sh` are listed in `.gitignore` and will not be overwritten by `git pull`.
 
 ## Usage
 
@@ -100,7 +125,8 @@ python daqmon.py --debug
 | `daqmon_server.py` | Monitor server daemon (Backend) |
 | `daqmon.py` | Telegraf exec plugin for InfluxDB |
 | `onlutils.py` | Shared utilities: ZMQ, SSH, logging |
-| `onlconsts.py` | System constants and configuration |
+| `onlconsts.py.example` | Configuration template → copy to `onlconsts.py` |
+| `executedaq.sh.example` | DAQ launch script template → copy to `executedaq.sh` |
 | `rcui.py` / `rc.ui` | PySide6 UI layout |
 | `create_runcatalog_db.py` | Initialize SQLite run catalog schema |
 | `killrun.py` | Emergency run termination script |
@@ -134,6 +160,13 @@ sudo dnf install xcb-util-cursor
 ```bash
 cp onlconsts.py.example onlconsts.py
 # Edit onlconsts.py with your site settings
+```
+
+**`executedaq.sh: No such file or directory` on remote hosts**
+```bash
+cp executedaq.sh.example executedaq.sh
+# Fill in the Environment Setup section
+# Deploy executedaq.sh to the path specified in kEXECUTEDAQ on each DAQ server
 ```
 
 **daqmon_server not responding**

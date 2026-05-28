@@ -392,7 +392,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         for daq in optlist:
             mode = daq[0]
             if mode > 0:
-                cmd = '%s %s%s -o "%s"' % (
+                cmd = 'bash %s %s%s -o "%s"' % (
                     self.Executedaq, daq[1], rawdatadiropt, daq[2])
                 log.info("Executing remote DAQ command via SSH on %s", daq[3])
                 success, output = onlutils.run_ssh_cmd(cmd, daq[3])
@@ -405,7 +405,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         time.sleep(1)
 
         tcb = optlist[-1]
-        cmd = '%s %s%s -o "%s"' % (
+        cmd = 'bash %s %s%s -o "%s"' % (
             self.Executedaq, tcb[1], rawdatadiropt, tcb[2])
         log.info("Executing TCB remote command via SSH on %s", tcb[3])
         success, output = onlutils.run_ssh_cmd(cmd, tcb[3])
