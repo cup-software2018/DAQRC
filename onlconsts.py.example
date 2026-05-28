@@ -21,16 +21,26 @@ kRUNTYPELIST = ['', 'physics', 'calibration', 'test']
 
 kOUTPUTFILEFORMAT = 'hdf5' # hdf5 or root
 kOUTPUTSPLITTIME = 3600 # 1 hour for spliting output file
-kSTATSREPORTINTERVAL = 10 
+
 
 # ===========================================================
-# Do not modify from here!!! (Updated for DAQ Monitor refactoring)
+# Do not modify from here!!!
 # ===========================================================
+
+kSTATSREPORTINTERVAL = 10 # for influxdb
+
+# DAQ Monitor Server (daqmon_server.py) settings
+kDAQMON_LOG_FILE         = '/tmp/cupdaq_daqmon_server.log'
+kDAQMON_PID_FILE         = '/tmp/cupdaq_daqmon_server.pid'
+kDAQMON_IDLE_TIMEOUT     = 3600  # seconds before entering degraded mode when DAQ is DOWN
+kDAQMON_RECONNECT_INTERVAL = 10  # seconds between DAQ reconnection attempts
 
 # DAQ Monitor ZMQ Server Address
-kMONITORIPADDR = 'localhost'
-kMONITORPORT = 7030
-kMONITOR_ADDR = 'tcp://%s:%d' % (kMONITORIPADDR, kMONITORPORT)
+kDAQMON_IP       = 'localhost'
+kDAQMON_CMD_PORT = 7030
+kDAQMON_CMD_ADDR = 'tcp://%s:%d' % (kDAQMON_IP, kDAQMON_CMD_PORT)
+kDAQMON_PUB_PORT = 7031
+kDAQMON_PUB_ADDR = 'tcp://%s:%d' % (kDAQMON_IP, kDAQMON_PUB_PORT)
 
 kEXESCRIPT = 'executedaq.sh'
 

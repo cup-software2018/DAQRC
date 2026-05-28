@@ -2,16 +2,60 @@ import os
 import sys
 import time
 import yaml
+import zmq
 import logging
 from datetime import datetime
-from PySide6.QtCore import Signal, Slot, Qt, QObject, QTimer
+from PySide6.QtCore import Signal, Slot, Qt, QObject, QTimer, QThread
 from PySide6.QtGui import QFont, QColor, QScreen, QGuiApplication
 from PySide6.QtWidgets import QMainWindow, QApplication, QVBoxLayout, QHBoxLayout, QMessageBox, QFileDialog, QTextEdit
 from rcui import Ui_MainWindow
 
 import onlconsts
 import onlutils
-from onlthreads import DAQStatePollerThread, MonitorPollerThread
+
+
+class MonitorPollerThread(QThread):
+    """
+    Subscribes to daqmon_server's PUB socket (1Hz).
+    Receives RunState + RunStats in a single payload.
+    """
+    stats_received = Signal(object)
+
+    def __init__(self, pub_endpoint, parent=None):
+        super().__init__(parent)
+        self.pub_endpoint = pub_endpoint
+        self.active = True
+        self.sock = None
+
+    def _connect(self):
+        sock = onlutils._ctx.socket(zmq.SUB)
+        sock.setsockopt(zmq.LINGER, 0)
+        sock.setsockopt(zmq.SUBSCRIBE, b"")
+        sock.connect(self.pub_endpoint)
+        return sock
+
+    def run(self):
+        while self.active:
+            if self.sock is None:
+                self.sock = self._connect()
+            try:
+                if self.sock.poll(timeout=1500) != 0:
+                    reply = self.sock.recv_json()
+                    self.stats_received.emit(reply)
+                else:
+                    self.stats_received.emit({})
+            except Exception:
+                if self.sock:
+                    self.sock.close()
+                    self.sock = None
+                self.stats_received.emit({})
+
+    def stop(self):
+        self.active = False
+        if self.sock:
+            self.sock.close()
+            self.sock = None
+        self.wait()
 
 log = onlutils.get_logger("RC", "/tmp/cupdaq_rc.log")
 
@@ -98,21 +142,14 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
         self.check_and_start_monitor()
 
-        self.poller_thread = DAQStatePollerThread(self.daq_endpoint)
-        self.poller_thread.state_received.connect(self.on_state_received)
-        self.poller_thread.start()
-
         self.monitor_poller_thread = MonitorPollerThread(
-            onlconsts.kMONITOR_ADDR)
+            onlconsts.kDAQMON_PUB_ADDR)
         self.monitor_poller_thread.stats_received.connect(
             self.on_stats_received)
         self.monitor_poller_thread.start()
 
     def closeEvent(self, event):
         log.info("Closing RC GUI and stopping background threads...")
-
-        if hasattr(self, 'poller_thread'):
-            self.poller_thread.stop()
 
         if hasattr(self, 'monitor_poller_thread'):
             self.monitor_poller_thread.stop()
@@ -147,24 +184,22 @@ class MainWindow(QMainWindow, Ui_MainWindow):
     def check_and_start_monitor(self):
         reply = self.send_monitor_cmd({"cmd": "PING"})
 
-        if not reply:
-            log.warning(
-                "Monitor daemon is not responding. Starting daq_monitor.py in background...")
-            monitor_script = os.path.join(os.path.dirname(
-                os.path.abspath(__file__)), 'daq_monitor.py')
-            log_file = '/tmp/cupdaq_monitor_daemon.log'
-            python_exe = sys.executable if sys.executable else 'python'
-            start_cmd = f"nohup {python_exe} {monitor_script} > {log_file} 2>&1 &"
-            os.system(start_cmd)
-            time.sleep(1.0)
-        else:
-            log.info("Monitor daemon is already running on port %d.",
-                     onlconsts.kMONITORPORT)
+        if reply:
+            log.info("Monitor daemon running on port %d.",
+                     onlconsts.kDAQMON_CMD_PORT)
+            return
+
+        msg = (f"daqmon_server is not running on port {onlconsts.kDAQMON_CMD_PORT}.\n\n"
+               f"Please start it before launching RC:\n\n"
+               f"  python daqmon_server.py --daemon")
+        log.critical("Monitor daemon not found. %s", msg)
+        self.msgbox_error(msg)
+        sys.exit(1)
 
     def send_monitor_cmd(self, req_data):
         if self.MonitorSocket is None:
             self.MonitorSocket = onlutils.get_connection(
-                onlconsts.kMONITOR_ADDR)
+                onlconsts.kDAQMON_CMD_ADDR)
 
         cmd = req_data.get("cmd")
         reply = onlutils.send_daq_cmd(self.MonitorSocket, cmd, req_data)
@@ -190,7 +225,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
     def boot_run(self):
         log.info("Initiating BOOT_RUN sequence...")
-        self.check_and_start_monitor()
 
         self.Shift = str(self.ShiftConfig.text())
         if not self.Shift:
@@ -367,6 +401,9 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.OnThisRC = True
         self.StartTime = 0
         self.EndTime = 0
+
+        # Notify daqmon_server that TCB and DAQ ZMQ servers are now running
+        self.send_monitor_cmd({"cmd": "NOTIFY_DAQ_STARTED"})
         log.info("Boot sequence completed.")
 
     def config_run(self):
@@ -424,8 +461,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             reply = self.msgbox_question(msg)
             if reply.clickedButton() is reply.button(QMessageBox.No):
                 return
+            log.warning("User requested FORCE EXIT.")
 
-        log.warning("User requested FORCE EXIT.")
         if self._get_run_socket():
             reply = onlutils.send_daq_cmd(
                 self.RunSocket, onlconsts.kEXIT, timeout_ms=1000)
@@ -435,18 +472,11 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
     def on_stats_received(self, stats):
         if not stats:
-            self.update_run_stats_display()  # stats 없어도 display는 업데이트
+            self.update_run_stats_display()
             return
 
-        self.RunStats = stats.get("RunStats", {})
-        self.SubRunNumber = stats.get("SubRunNumber", 0)
-        self.StartTime = stats.get("StartTime", 0)
-        self.MonNames = stats.get("MonNames", [])
-        self.EndTime = stats.get("EndTime", 0)
-
-        self.update_run_stats_display()
-
-    def on_state_received(self, new_state, reply_dict):
+        # RunState is included in the daqmon_server PUB payload
+        new_state = stats.get("RunState", onlconsts.kDOWN)
         old_state = self.RunState
         self.RunState = new_state
 
@@ -456,19 +486,18 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 onlconsts.kDAQSTATE) else "UNKNOWN"
             log.info("DAQ State changed: %s (Raw value: %s)",
                      state_str, self.RunState)
-
             if onlutils.check_error(self.RunState):
                 log.error("DAQ has entered ERROR state!")
 
         self.set_runstate(self.RunState)
 
-        if onlutils.check_state(self.RunState, onlconsts.kRUNNING) or \
-                onlutils.check_state(self.RunState, onlconsts.kRUNENDED):
-            self.monitor_poller_thread.enable()
-        else:
-            self.monitor_poller_thread.disable()
+        self.RunStats = stats.get("RunStats", {})
+        self.SubRunNumber = stats.get("SubRunNumber", 0)
+        self.StartTime = stats.get("StartTime", 0)
+        self.MonNames = stats.get("MonNames", [])
+        self.EndTime = stats.get("EndTime", 0)
 
-        if not self.OnThisRC and self.RunState != onlconsts.kDOWN:
+        if not self.OnThisRC and self.RunState != onlconsts.kDOWN and old_state != self.RunState:
             resp = self.send_monitor_cmd({"cmd": "SYNC_LATEST"})
             if resp and "runnum" in resp:
                 self.RunNumber = resp["runnum"]
@@ -493,16 +522,6 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         if onlutils.check_state(self.RunState, onlconsts.kRUNENDED):
             if not self._is_asking_goodrun:
                 self._is_asking_goodrun = True
-
-                if not self.EndTime:
-                    reply = onlutils.send_daq_cmd(
-                        self._get_run_socket(), onlconsts.kQUERYRUNINFO, timeout_ms=1000)
-                    if reply and "end_time" in reply:
-                        self.EndTime = reply["end_time"]
-                    elif reply is None:
-                        if self.RunSocket:
-                            self.RunSocket.close()
-                            self.RunSocket = None
 
                 onlbit = 0
                 msg = 'Tag run %06d as GOODRUN?' % self.RunNumber
