@@ -126,7 +126,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.StartButton.clicked.connect(self.start_run)
         self.EndButton.clicked.connect(self.end_run)
         self.ExitButton.clicked.connect(self.exit_run)
-        self.ExitButton.setEnabled(False)
+
+        self.set_runstate(onlconsts.kDOWN)
 
         self.daq_endpoint = onlconsts.kDAQSERVER_ADDR
         self.MonitorSocket = None
