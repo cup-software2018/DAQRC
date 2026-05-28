@@ -1,13 +1,15 @@
 import os
 import sys
 import time
+import shutil
+import subprocess
 import yaml
 import zmq
 import logging
 from datetime import datetime
-from PySide6.QtCore import Signal, Slot, Qt, QObject, QTimer, QThread
-from PySide6.QtGui import QFont, QColor, QScreen, QGuiApplication
-from PySide6.QtWidgets import QMainWindow, QApplication, QVBoxLayout, QHBoxLayout, QMessageBox, QFileDialog, QTextEdit
+from PySide6.QtCore import Signal, Slot, Qt, QObject, QThread
+from PySide6.QtGui import QFont, QGuiApplication
+from PySide6.QtWidgets import QMainWindow, QApplication, QVBoxLayout, QMessageBox, QFileDialog, QTextEdit
 from rcui import Ui_MainWindow
 
 import onlconsts
@@ -317,10 +319,20 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 yaml.dump(main_config, out_fp,
                           default_flow_style=None, sort_keys=False)
 
-            cmd = 'scp -q %s %s:%s' % (merged_local_config,
-                                       onlconsts.kDAQSERVER_IP, target_config)
-            os.system(cmd)
-            log.info("Merged config SCP copied to target: %s", target_config)
+            if getattr(onlconsts, 'kISREMOTEDAQ', True):
+                result = subprocess.run(
+                    ['scp', '-q', merged_local_config,
+                     f'{onlconsts.kDAQSERVER_IP}:{target_config}'],
+                    capture_output=True)
+                if result.returncode != 0:
+                    err = result.stderr.decode().strip()
+                    log.error("SCP failed: %s", err)
+                    return self.msgbox_error(f"Failed to copy config to DAQ server:\n{err}")
+                log.info("Config SCP copied to %s", target_config)
+            else:
+                os.makedirs(os.path.dirname(target_config), exist_ok=True)
+                shutil.copy(merged_local_config, target_config)
+                log.info("Config copied locally to %s", target_config)
 
             if os.path.exists(merged_local_config):
                 os.remove(merged_local_config)
