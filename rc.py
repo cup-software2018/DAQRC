@@ -398,6 +398,9 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 success, output = onlutils.run_ssh_cmd(cmd, daq[3])
                 if not success:
                     log.error("Execution failed on %s: %s", daq[3], output)
+                    self.set_runstate(onlconsts.kDOWN)
+                    return self.msgbox_error(
+                        f"Boot failed on {daq[3]}:\n{output}")
 
         time.sleep(1)
 
@@ -408,6 +411,9 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         success, output = onlutils.run_ssh_cmd(cmd, tcb[3])
         if not success:
             log.error("TCB Execution failed on %s: %s", tcb[3], output)
+            self.set_runstate(onlconsts.kDOWN)
+            return self.msgbox_error(
+                f"TCB boot failed on {tcb[3]}:\n{output}")
 
         self.OnThisRC = True
         self.StartTime = 0
