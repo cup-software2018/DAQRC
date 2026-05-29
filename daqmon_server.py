@@ -540,20 +540,21 @@ class DAQMonitorServer:
                         conn.commit()
                         run_num = cursor.lastrowid
 
-                        # Sum daqtime of completed runs with same runtype (excl. current)
-                        cursor.execute("PRAGMA table_info(runcatalog)")
-                        time_cols = [row[1] for row in cursor.fetchall()
-                                     if row[1].startswith('t') and row[2].upper() == 'REAL']
+                        # Sum daqtime of completed physics runs (excl. current)
                         historical = 0.0
-                        if time_cols:
-                            col_expr = ", ".join(f"COALESCE({c}, 0.0)" for c in time_cols)
-                            cursor.execute(f"""
-                                SELECT {col_expr} FROM runcatalog
-                                WHERE runtype = ?
-                                  AND etime IS NOT NULL AND etime != ''
-                                  AND runnum != ?
-                            """, (runtype, run_num))
-                            historical = sum(max(row) for row in cursor.fetchall())
+                        if runtype == "physics":
+                            cursor.execute("PRAGMA table_info(runcatalog)")
+                            time_cols = [row[1] for row in cursor.fetchall()
+                                         if row[1].startswith('t') and row[2].upper() == 'REAL']
+                            if time_cols:
+                                col_expr = ", ".join(f"COALESCE({c}, 0.0)" for c in time_cols)
+                                cursor.execute(f"""
+                                    SELECT {col_expr} FROM runcatalog
+                                    WHERE runtype = 'physics'
+                                      AND etime IS NOT NULL AND etime != ''
+                                      AND runnum != ?
+                                """, (run_num,))
+                                historical = sum(max(row) for row in cursor.fetchall())
 
                         self._current_run_number = run_num
                         self._current_config_file = config

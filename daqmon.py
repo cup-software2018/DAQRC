@@ -153,7 +153,7 @@ def main():
                 run_stats  = snapshot.get("RunStats", {})
                 mon_names  = snapshot.get("MonNames", [])
 
-                # daq_run — always write (gap 없이 state 추적)
+                # daq_run — always write to track state without gaps
                 run_fields = {"run_state": int(run_state)}
                 if run_number >= 0:
                     run_fields["run_number"] = int(run_number)
@@ -172,8 +172,10 @@ def main():
                 if rec:
                     lines.append(rec)
 
-                # daq_total — 런 진행 중일 때만
-                if run_state != onlconsts.kDOWN and run_number >= 0:
+                # daq_total — only while a physics run is active
+                if (run_state != onlconsts.kDOWN
+                        and run_number >= 0
+                        and run_type == "physics"):
                     current_daqtime = max(
                         (run_stats.get(n, {}).get("t", 0.0) for n in mon_names),
                         default=0.0
@@ -186,8 +188,8 @@ def main():
                     if rec:
                         lines.append(rec)
 
-                # daq_module — MonNames가 있으면 항상 write
-                # DOWN 상태에서는 connected=0 만, stats는 쓰지 않음
+                # daq_module — write for every known module
+                # when DOWN: only emit connected=0, skip stats
                 mod_connected = snapshot.get("ModuleConnected", {})
                 is_active = run_state != onlconsts.kDOWN
                 for name in mon_names:
