@@ -148,13 +148,14 @@ def main():
                 mon_names  = snapshot.get("MonNames", [])
 
                 # daq_run — always write to track state without gaps
+                run_tags = {}
+                if run_type:
+                    run_tags["run_type"] = run_type
+                if shift:
+                    run_tags["shift"] = shift
                 run_fields = {"run_state": int(run_state)}
                 if run_number >= 0:
                     run_fields["run_number"] = int(run_number)
-                if run_type:
-                    run_fields["run_type"] = run_type
-                if shift:
-                    run_fields["shift"] = shift
                 run_fields["subrun_number"] = int(snapshot.get("SubRunNumber", 0))
                 start_time = snapshot.get("StartTime", 0)
                 end_time   = snapshot.get("EndTime", 0)
@@ -162,7 +163,7 @@ def main():
                     run_fields["start_time"] = float(start_time)
                 if end_time:
                     run_fields["end_time"] = float(end_time)
-                rec = _line("daq_run", {}, run_fields, ts_ns)
+                rec = _line("daq_run", run_tags, run_fields, ts_ns)
                 if rec:
                     lines.append(rec)
 
@@ -173,8 +174,7 @@ def main():
                         default=0.0
                     )
                     total_daqtime = snapshot.get("DaqtimeBase", 0.0) + current_daqtime
-                    rec = _line("daq_total", {}, {
-                        "run_type":        run_type,
+                    rec = _line("daq_total", {"run_type": run_type}, {
                         "total_daqtime_s": total_daqtime,
                     }, ts_ns)
                     if rec:

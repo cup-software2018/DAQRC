@@ -158,8 +158,11 @@ class DAQMonitorServer:
 
             if not connected and not monitor_alive:
                 if not self._fallback_modules_loaded:
-                    self._try_load_fallback_modules()
                     self._fallback_modules_loaded = True
+                    with self._data_lock:
+                        mon_names_empty = not self._shared_data['MonNames']
+                    if mon_names_empty:
+                        self._try_load_fallback_modules()
                 self._publish(onlconsts.kDOWN, time.time())
 
             if woke_early or elapsed >= onlconsts.kDAQMON_RECONNECT_INTERVAL:
