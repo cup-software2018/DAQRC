@@ -170,6 +170,7 @@ class DAQMonitorServer:
         last_run_number = -1
         last_run_state = -1
         last_active_time = time.time()
+        fallback_loaded = False  # True after attempting to load module list from last run config
 
         mon_list = []
         run_stats = {}
@@ -350,6 +351,50 @@ class DAQMonitorServer:
                         except Exception:
                             pass
                         tcb_sock = None
+
+                # On first DOWN cycle with empty mon_list, try loading last run's config
+                if not mon_list and not is_active and not fallback_loaded:
+                    fallback_loaded = True
+                    try:
+                        with self._db_write_lock:
+                            conn = sqlite3.connect(onlconsts.kRUNCATALOGDBFILE, timeout=5.0)
+                            try:
+                                conn.row_factory = sqlite3.Row
+                                cursor = conn.cursor()
+                                cursor.execute(
+                                    "SELECT runnum FROM runcatalog ORDER BY runnum DESC LIMIT 1")
+                                record = cursor.fetchone()
+                            finally:
+                                conn.close()
+                        if record:
+                            runnum = record['runnum']
+                            config_path = os.path.join(
+                                onlconsts.kRAWDATA_DIR, 'CONFIG', f'{runnum:06d}.yml')
+                            if os.path.isfile(config_path):
+                                with open(config_path, 'r', encoding='utf-8') as fp:
+                                    config_data = yaml.safe_load(fp) or {}
+                                for item in config_data.get('DAQ', []):
+                                    name = str(item.get('NAME', ''))
+                                    ip = str(item.get('IP', ''))
+                                    port = int(item.get('PORT', 0))
+                                    if 'TCB' in name:
+                                        continue
+                                    mon_list.append(
+                                        {'name': name, 'ip': ip, 'port': port, 'sock': None})
+                                    mon_names.append(name)
+                                    run_stats[name] = {
+                                        'n': 0, 'dn': 0, 't': 0.0,
+                                        'dt': 0.0, 'ar': 0.0, 'sr': 0.0}
+                                with self._data_lock:
+                                    self._shared_data['MonNames'] = list(mon_names)
+                                    self._shared_data['RunStats'] = {
+                                        k: dict(v) for k, v in run_stats.items()}
+                                log.info("Loaded module list from run %d config for DOWN-state polling.",
+                                         runnum)
+                            else:
+                                log.warning("Fallback config not found: %s", config_path)
+                    except Exception as e:
+                        log.warning("Failed to load fallback module list: %s", e)
 
                 # Module polling — connection check in all states, stats only when active
                 if mon_list:
