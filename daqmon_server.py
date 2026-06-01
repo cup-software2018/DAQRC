@@ -111,15 +111,16 @@ class DAQMonitorServer:
                     conn.row_factory = sqlite3.Row
                     cursor = conn.cursor()
                     cursor.execute(
-                        "SELECT runnum, runtype, shift FROM runcatalog"
+                        "SELECT runnum, runtype, shift, subrun_number FROM runcatalog"
                         " ORDER BY runnum DESC LIMIT 1")
                     record = cursor.fetchone()
                     if not record:
                         return
 
-                    runnum   = record['runnum']
-                    runtype  = record['runtype'] or ""
-                    shift    = record['shift'] or ""
+                    runnum        = record['runnum']
+                    runtype       = record['runtype'] or ""
+                    shift         = record['shift'] or ""
+                    subrun_number = record['subrun_number'] or 0
 
                     # DaqtimeBase = sum of daqtime for all completed physics runs
                     daqtime_base = 0.0
@@ -151,11 +152,12 @@ class DAQMonitorServer:
                 if 'TCB' not in str(item.get('NAME', ''))
             ]
             with self._data_lock:
-                self._shared_data['RunNumber']   = runnum
-                self._shared_data['RunType']     = runtype
-                self._shared_data['Shift']       = shift
-                self._shared_data['DaqtimeBase'] = daqtime_base
-                self._shared_data['MonNames']    = mon_names
+                self._shared_data['RunNumber']    = runnum
+                self._shared_data['RunType']      = runtype
+                self._shared_data['Shift']        = shift
+                self._shared_data['DaqtimeBase']  = daqtime_base
+                self._shared_data['SubRunNumber'] = subrun_number
+                self._shared_data['MonNames']     = mon_names
                 self._shared_data['RunStats']    = {
                     name: {'n': 0, 'dn': 0, 't': 0.0, 'dt': 0.0, 'ar': 0.0, 'sr': 0.0}
                     for name in mon_names
@@ -548,6 +550,10 @@ class DAQMonitorServer:
                             and onlutils.check_state(run_state, onlconsts.kRUNNING)
                             and current_time - last_db_update_time
                                 >= onlconsts.kSTATSREPORTINTERVAL):
+                        with self._data_lock:
+                            subrun_number = self._shared_data['SubRunNumber']
+                        set_clauses.append("subrun_number=?")
+                        update_params.append(subrun_number)
                         q = ("UPDATE runcatalog SET "
                              + ", ".join(set_clauses)
                              + " WHERE runnum=?")

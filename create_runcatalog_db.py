@@ -60,6 +60,7 @@ def main():
         config TEXT,
         stime TEXT,
         etime TEXT,
+        subrun_number INTEGER DEFAULT 0,
         onlbit INTEGER,
         offbit INTEGER,
         runlog TEXT
