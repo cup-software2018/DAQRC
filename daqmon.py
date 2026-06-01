@@ -114,18 +114,12 @@ def main():
             if args.debug:
                 print(f"# health: {health}", file=sys.stderr)
             tcb_connected = int(bool(health.get("daq_connected", False)))
-        else:
-            tcb_connected = 0
-
-        rec = _line("tcb", {}, {"connected": tcb_connected}, ts_ns)
-        if rec:
-            lines.append(rec)
+            rec = _line("tcb", {}, {"connected": tcb_connected}, ts_ns)
+            if rec:
+                lines.append(rec)
 
     except Exception as e:
         print(f"# ERROR: server health: {e}", file=sys.stderr)
-        rec = _line("tcb", {}, {"connected": 0}, ts_ns)
-        if rec:
-            lines.append(rec)
 
     finally:
         cmd_sock.close()
