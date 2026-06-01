@@ -560,7 +560,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                     "onlbit": onlbit,
                     "stime_str": stime_str,
                     "etime_str": etime_str,
-                    "final_stats": self.RunStats
+                    "final_stats": self.RunStats,
+                    "subrun_number": self.SubRunNumber,
                 }
                 self.send_monitor_cmd(req)
 

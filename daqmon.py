@@ -192,6 +192,8 @@ def main():
                         s = run_stats.get(name, {})
                         mod_fields["nevent"]     = int(s.get("n", 0))
                         mod_fields["daq_time_s"] = float(s.get("t", 0.0))
+                        mod_fields["acc_rate"]   = float(s.get("ar", 0.0))
+                        mod_fields["ins_rate"]   = float(s.get("sr", 0.0))
                     rec = _line("daq_module", {"module": name}, mod_fields, ts_ns)
                     if rec:
                         lines.append(rec)

@@ -718,8 +718,9 @@ class DAQMonitorServer:
                         log.info("TAG_GOODRUN: RunNum %s, goodrun=%s",
                                  run_num, bool(onlbit))
 
-                        q = "UPDATE runcatalog SET stime=?, etime=?, onlbit=?"
-                        params = [stime_str, etime_str, onlbit]
+                        subrun_number = request.get("subrun_number", 0)
+                        q = "UPDATE runcatalog SET stime=?, etime=?, onlbit=?, subrun_number=?"
+                        params = [stime_str, etime_str, onlbit, subrun_number]
 
                         for daqname, stats in request.get("final_stats", {}).items():
                             n_val = stats.get('n', 0)
