@@ -172,10 +172,8 @@ def main():
                 if rec:
                     lines.append(rec)
 
-                # daq_total — only while a physics run is active
-                if (run_state != onlconsts.kDOWN
-                        and run_number >= 0
-                        and run_type == "physics"):
+                # daq_total — any time a physics run exists (including DOWN between runs)
+                if run_type == "physics" and run_number >= 0:
                     current_daqtime = max(
                         (run_stats.get(n, {}).get("t", 0.0) for n in mon_names),
                         default=0.0
