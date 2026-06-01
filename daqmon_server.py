@@ -103,7 +103,7 @@ class DAQMonitorServer:
             return False
 
     def _try_load_fallback_modules(self):
-        """Populate MonNames from the last run's config for degraded-mode publishing."""
+        """Load last run's metadata and module list from DB/config for degraded-mode publishing."""
         try:
             with self._db_write_lock:
                 conn = sqlite3.connect(onlconsts.kRUNCATALOGDBFILE, timeout=5.0)
@@ -111,13 +111,33 @@ class DAQMonitorServer:
                     conn.row_factory = sqlite3.Row
                     cursor = conn.cursor()
                     cursor.execute(
-                        "SELECT runnum FROM runcatalog ORDER BY runnum DESC LIMIT 1")
+                        "SELECT runnum, runtype, shift FROM runcatalog"
+                        " ORDER BY runnum DESC LIMIT 1")
                     record = cursor.fetchone()
+                    if not record:
+                        return
+
+                    runnum   = record['runnum']
+                    runtype  = record['runtype'] or ""
+                    shift    = record['shift'] or ""
+
+                    # DaqtimeBase = sum of daqtime for all completed physics runs
+                    daqtime_base = 0.0
+                    if runtype == "physics":
+                        cursor.execute("PRAGMA table_info(runcatalog)")
+                        time_cols = [row[1] for row in cursor.fetchall()
+                                     if row[1].startswith('t') and row[2].upper() == 'REAL']
+                        if time_cols:
+                            col_expr = ", ".join(f"COALESCE({c}, 0.0)" for c in time_cols)
+                            cursor.execute(f"""
+                                SELECT {col_expr} FROM runcatalog
+                                WHERE runtype = 'physics'
+                                  AND etime IS NOT NULL AND etime != ''
+                            """)
+                            daqtime_base = sum(max(row) for row in cursor.fetchall())
                 finally:
                     conn.close()
-            if not record:
-                return
-            runnum = record['runnum']
+
             config_path = os.path.join(
                 onlconsts.kRAWDATA_DIR, 'CONFIG', f'{runnum:06d}.yml')
             if not os.path.isfile(config_path):
@@ -131,12 +151,17 @@ class DAQMonitorServer:
                 if 'TCB' not in str(item.get('NAME', ''))
             ]
             with self._data_lock:
-                self._shared_data['MonNames'] = mon_names
-                self._shared_data['RunStats'] = {
+                self._shared_data['RunNumber']   = runnum
+                self._shared_data['RunType']     = runtype
+                self._shared_data['Shift']       = shift
+                self._shared_data['DaqtimeBase'] = daqtime_base
+                self._shared_data['MonNames']    = mon_names
+                self._shared_data['RunStats']    = {
                     name: {'n': 0, 'dn': 0, 't': 0.0, 'dt': 0.0, 'ar': 0.0, 'sr': 0.0}
                     for name in mon_names
                 }
-            log.info("Loaded module list from run %d config for degraded-mode publishing.", runnum)
+            log.info("Fallback: run %d (%s) loaded, daqtime_base=%.0fs, modules=%s",
+                     runnum, runtype, daqtime_base, mon_names)
         except Exception as e:
             log.warning("Failed to load fallback module list: %s", e)
 
