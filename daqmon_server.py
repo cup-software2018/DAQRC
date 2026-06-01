@@ -103,27 +103,36 @@ class DAQMonitorServer:
 
     def _reconnect_loop(self):
         """Retry TCB connection when disconnected.
-        Wakes immediately on _reconnect_event (set by NOTIFY_DAQ_STARTED),
-        otherwise retries every kDAQMON_RECONNECT_INTERVAL seconds."""
+        Publishes kDOWN heartbeats at 1Hz when the monitor loop is not running.
+        Reconnection is attempted every kDAQMON_RECONNECT_INTERVAL seconds,
+        or immediately when _reconnect_event is set (NOTIFY_DAQ_STARTED)."""
+        elapsed = 0
         while self.running:
-            self._reconnect_event.wait(timeout=onlconsts.kDAQMON_RECONNECT_INTERVAL)
-            self._reconnect_event.clear()
-
+            woke_early = self._reconnect_event.wait(timeout=1.0)
             if not self.running:
                 break
 
             with self._hw_lock:
                 connected = self._daq_connected
+            monitor_alive = (self.monitor_thread is not None
+                             and self.monitor_thread.is_alive())
 
-            if not connected:
-                log.info("Retrying TCB connection...")
-                if self._connect_daq():
-                    if (self.monitor_thread is None
-                            or not self.monitor_thread.is_alive()):
-                        self.monitor_thread = threading.Thread(
-                            target=self._monitor_loop, daemon=True)
-                        self.monitor_thread.start()
-                        log.info("Monitor thread restarted after reconnection.")
+            if not connected and not monitor_alive:
+                self._publish(onlconsts.kDOWN, time.time())
+
+            if woke_early or elapsed >= onlconsts.kDAQMON_RECONNECT_INTERVAL:
+                self._reconnect_event.clear()
+                elapsed = 0
+                if not connected:
+                    log.info("Retrying TCB connection...")
+                    if self._connect_daq():
+                        if not monitor_alive:
+                            self.monitor_thread = threading.Thread(
+                                target=self._monitor_loop, daemon=True)
+                            self.monitor_thread.start()
+                            log.info("Monitor thread restarted after reconnection.")
+            else:
+                elapsed += 1
 
     # ------------------------------------------------------------------
     # Startup
