@@ -191,15 +191,13 @@ def main():
                 mod_connected = snapshot.get("ModuleConnected", {})
                 is_active = run_state != onlconsts.kDOWN
                 for name in mon_names:
+                    mod_fields = {
+                        "connected": int(bool(mod_connected.get(name, False))),
+                    }
                     if is_active:
                         s = run_stats.get(name, {})
-                        mod_fields = {
-                            "connected":  int(bool(mod_connected.get(name, False))),
-                            "nevent":     int(s.get("n", 0)),
-                            "daq_time_s": float(s.get("t", 0.0)),
-                        }
-                    else:
-                        mod_fields = {"connected": 0}
+                        mod_fields["nevent"]     = int(s.get("n", 0))
+                        mod_fields["daq_time_s"] = float(s.get("t", 0.0))
                     rec = _line("daq_module", {"module": name}, mod_fields, ts_ns)
                     if rec:
                         lines.append(rec)

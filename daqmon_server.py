@@ -258,9 +258,10 @@ class DAQMonitorServer:
                 if run_state != onlconsts.kDOWN:
                     last_active_time = current_time
 
-                if (onlutils.check_state(run_state, onlconsts.kRUNNING) or
-                        onlutils.check_state(run_state, onlconsts.kRUNENDED)):
+                is_active = (onlutils.check_state(run_state, onlconsts.kRUNNING) or
+                             onlutils.check_state(run_state, onlconsts.kRUNENDED))
 
+                if is_active:
                     # Use run info cached by BOOT_RUN; fall back to DB only if missing
                     current_run_number = self._current_run_number
                     config_file = self._current_config_file
@@ -350,10 +351,12 @@ class DAQMonitorServer:
                             pass
                         tcb_sock = None
 
-                    # Each DAQ module → statistics (TCB excluded above)
+                # Module polling — connection check in all states, stats only when active
+                if mon_list:
                     local_stats = {}
                     set_clauses = []
                     update_params = []
+                    connected_names = set()
 
                     for mon in mon_list:
                         name = mon['name']
@@ -381,30 +384,33 @@ class DAQMonitorServer:
                                 if trg_info is None:
                                     raise Exception("Empty response")
 
-                                n = run_stats[name]['n'] = trg_info.get("nevent", 0)
-                                t_ns = trg_info.get("trgtime", 0)
-                                t = run_stats[name]['t'] = t_ns / 1_000_000_000.0
+                                connected_names.add(name)
 
-                                if t > 0:
-                                    run_stats[name]['ar'] = n / t
-                                dt = t - run_stats[name]['dt']
-                                dn = n - run_stats[name]['dn']
-                                if dt > 0:
-                                    run_stats[name]['sr'] = dn / dt
-                                run_stats[name]['dt'] = t
-                                run_stats[name]['dn'] = n
+                                if is_active:
+                                    n = run_stats[name]['n'] = trg_info.get("nevent", 0)
+                                    t_ns = trg_info.get("trgtime", 0)
+                                    t = run_stats[name]['t'] = t_ns / 1_000_000_000.0
 
-                                local_stats[name] = dict(run_stats[name])
+                                    if t > 0:
+                                        run_stats[name]['ar'] = n / t
+                                    dt = t - run_stats[name]['dt']
+                                    dn = n - run_stats[name]['dn']
+                                    if dt > 0:
+                                        run_stats[name]['sr'] = dn / dt
+                                    run_stats[name]['dt'] = t
+                                    run_stats[name]['dn'] = n
 
-                                if 'AADC' in name:
-                                    set_clauses.extend(["naadc=?", "taadc=?"])
-                                elif 'FADC' in name:
-                                    set_clauses.extend(["nfadc=?", "tfadc=?"])
-                                elif 'SADC' in name:
-                                    set_clauses.extend(["nsadc=?", "tsadc=?"])
-                                elif 'IADC' in name:
-                                    set_clauses.extend(["niadc=?", "tiadc=?"])
-                                update_params.extend([n, t])
+                                    local_stats[name] = dict(run_stats[name])
+
+                                    if 'AADC' in name:
+                                        set_clauses.extend(["naadc=?", "taadc=?"])
+                                    elif 'FADC' in name:
+                                        set_clauses.extend(["nfadc=?", "tfadc=?"])
+                                    elif 'SADC' in name:
+                                        set_clauses.extend(["nsadc=?", "tsadc=?"])
+                                    elif 'IADC' in name:
+                                        set_clauses.extend(["niadc=?", "tiadc=?"])
+                                    update_params.extend([n, t])
 
                             except Exception as e:
                                 log.error("Polling module %s failed: %s", name, e)
@@ -414,15 +420,16 @@ class DAQMonitorServer:
                                     pass
                                 mon['sock'] = None
 
-                    # Batch-update shared_data with collected results
-                    module_connected = {name: (name in local_stats) for name in mon_names}
+                    module_connected = {name: (name in connected_names) for name in mon_names}
                     with self._data_lock:
-                        self._shared_data['RunStats'].update(local_stats)
+                        if is_active:
+                            self._shared_data['RunStats'].update(local_stats)
                         self._shared_data['ModuleConnected'] = module_connected
                         self._shared_data['CurrentTime'] = current_time
 
                     # DB update — throttled to kSTATSREPORTINTERVAL (only while RUNNING)
-                    if (set_clauses
+                    if (is_active
+                            and set_clauses
                             and onlutils.check_state(run_state, onlconsts.kRUNNING)
                             and current_time - last_db_update_time
                                 >= onlconsts.kSTATSREPORTINTERVAL):
