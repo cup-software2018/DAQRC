@@ -678,8 +678,9 @@ class DAQMonitorServer:
                         run_num = cursor.lastrowid
 
                         # Sum daqtime of completed physics runs (excl. current)
-                        historical = 0.0
+                        # Only recalculate for physics runs; keep existing value for others
                         if runtype == "physics":
+                            historical = 0.0
                             cursor.execute("PRAGMA table_info(runcatalog)")
                             time_cols = [row[1] for row in cursor.fetchall()
                                          if row[1].startswith('t') and row[2].upper() == 'REAL']
@@ -692,14 +693,15 @@ class DAQMonitorServer:
                                       AND runnum != ?
                                 """, (run_num,))
                                 historical = sum(max(row) for row in cursor.fetchall())
+                            with self._data_lock:
+                                self._shared_data['DaqtimeBase'] = historical
 
                         self._current_run_number = run_num
                         self._current_config_file = config
                         with self._data_lock:
-                            self._shared_data['RunNumber']   = run_num
-                            self._shared_data['RunType']     = runtype
-                            self._shared_data['Shift']       = request.get("shift", "")
-                            self._shared_data['DaqtimeBase'] = historical
+                            self._shared_data['RunNumber'] = run_num
+                            self._shared_data['RunType']   = runtype
+                            self._shared_data['Shift']     = request.get("shift", "")
                         log.info("BOOT_RUN: Run %d  runtype=%s  historical_daqtime=%.0fs",
                                  run_num, runtype, historical)
                         result = {"run_num": run_num}

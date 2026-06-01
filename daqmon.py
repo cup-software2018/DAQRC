@@ -167,14 +167,17 @@ def main():
                 if rec:
                     lines.append(rec)
 
-                # daq_total — any time a physics run exists (including DOWN between runs)
-                if run_type == "physics" and run_number >= 0:
-                    current_daqtime = max(
-                        (run_stats.get(n, {}).get("t", 0.0) for n in mon_names),
-                        default=0.0
-                    )
+                # daq_total — always emit; current_daqtime added only during physics runs
+                if run_number >= 0:
+                    if run_type == "physics":
+                        current_daqtime = max(
+                            (run_stats.get(n, {}).get("t", 0.0) for n in mon_names),
+                            default=0.0
+                        )
+                    else:
+                        current_daqtime = 0.0
                     total_daqtime = snapshot.get("DaqtimeBase", 0.0) + current_daqtime
-                    rec = _line("daq_total", {"run_type": run_type}, {
+                    rec = _line("daq_total", {}, {
                         "total_daqtime_s": total_daqtime,
                     }, ts_ns)
                     if rec:
