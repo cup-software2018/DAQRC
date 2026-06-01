@@ -72,6 +72,7 @@ class DAQMonitorServer:
         self._daq_connected = False
         self.error_count = 0
         self.start_time = time.monotonic()
+        self._fallback_modules_loaded = False
 
         self.monitor_thread = None
         self.reconnect_thread = None
@@ -101,6 +102,44 @@ class DAQMonitorServer:
             log.warning("TCB connection failed: %s", e)
             return False
 
+    def _try_load_fallback_modules(self):
+        """Populate MonNames from the last run's config for degraded-mode publishing."""
+        try:
+            with self._db_write_lock:
+                conn = sqlite3.connect(onlconsts.kRUNCATALOGDBFILE, timeout=5.0)
+                try:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT runnum FROM runcatalog ORDER BY runnum DESC LIMIT 1")
+                    record = cursor.fetchone()
+                finally:
+                    conn.close()
+            if not record:
+                return
+            runnum = record['runnum']
+            config_path = os.path.join(
+                onlconsts.kRAWDATA_DIR, 'CONFIG', f'{runnum:06d}.yml')
+            if not os.path.isfile(config_path):
+                log.warning("Fallback config not found: %s", config_path)
+                return
+            with open(config_path, 'r', encoding='utf-8') as fp:
+                config_data = yaml.safe_load(fp) or {}
+            mon_names = [
+                str(item.get('NAME', ''))
+                for item in config_data.get('DAQ', [])
+                if 'TCB' not in str(item.get('NAME', ''))
+            ]
+            with self._data_lock:
+                self._shared_data['MonNames'] = mon_names
+                self._shared_data['RunStats'] = {
+                    name: {'n': 0, 'dn': 0, 't': 0.0, 'dt': 0.0, 'ar': 0.0, 'sr': 0.0}
+                    for name in mon_names
+                }
+            log.info("Loaded module list from run %d config for degraded-mode publishing.", runnum)
+        except Exception as e:
+            log.warning("Failed to load fallback module list: %s", e)
+
     def _reconnect_loop(self):
         """Retry TCB connection when disconnected.
         Publishes kDOWN heartbeats at 1Hz when the monitor loop is not running.
@@ -118,6 +157,9 @@ class DAQMonitorServer:
                              and self.monitor_thread.is_alive())
 
             if not connected and not monitor_alive:
+                if not self._fallback_modules_loaded:
+                    self._try_load_fallback_modules()
+                    self._fallback_modules_loaded = True
                 self._publish(onlconsts.kDOWN, time.time())
 
             if woke_early or elapsed >= onlconsts.kDAQMON_RECONNECT_INTERVAL:
