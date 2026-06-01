@@ -183,7 +183,8 @@ def main():
                 # daq_module — write for every known module
                 # when DOWN: only emit connected=0, skip stats
                 mod_connected = snapshot.get("ModuleConnected", {})
-                is_active = run_state != onlconsts.kDOWN
+                is_active  = run_state != onlconsts.kDOWN
+                is_running = onlutils.check_state(run_state, onlconsts.kRUNNING)
                 for name in mon_names:
                     mod_fields = {
                         "connected": int(bool(mod_connected.get(name, False))),
@@ -192,8 +193,9 @@ def main():
                         s = run_stats.get(name, {})
                         mod_fields["nevent"]     = int(s.get("n", 0))
                         mod_fields["daq_time_s"] = float(s.get("t", 0.0))
-                        mod_fields["acc_rate"]   = float(s.get("ar", 0.0))
-                        mod_fields["ins_rate"]   = float(s.get("sr", 0.0))
+                    if is_running:
+                        mod_fields["acc_rate"] = float(s.get("ar", 0.0))
+                        mod_fields["ins_rate"] = float(s.get("sr", 0.0))
                     rec = _line("daq_module", {"module": name}, mod_fields, ts_ns)
                     if rec:
                         lines.append(rec)
