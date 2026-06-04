@@ -51,7 +51,6 @@ def _line(measurement, tags, fields, ts_ns):
     return f"{prefix} {','.join(field_parts)} {ts_ns}"
 
 
-
 def _send_cmd(sock, cmd, timeout_ms=3000):
     """Send a daqmon_server command ({"cmd": ...} format) and return reply."""
     try:
@@ -110,7 +109,8 @@ def main():
         server_alive = reply is not None and reply.get("status") == "ok"
 
         if server_alive:
-            health = _send_cmd(cmd_sock, "GET_SERVER_HEALTH", timeout_ms=3000) or {}
+            health = _send_cmd(cmd_sock, "GET_SERVER_HEALTH",
+                               timeout_ms=3000) or {}
             if args.debug:
                 print(f"# health: {health}", file=sys.stderr)
             tcb_connected = int(bool(health.get("daq_connected", False)))
@@ -140,12 +140,12 @@ def main():
                 print(f"# snapshot: {snapshot}", file=sys.stderr)
 
             if snapshot and snapshot.get("type") != "shutdown":
-                run_state  = snapshot.get("RunState", onlconsts.kDOWN)
+                run_state = snapshot.get("RunState", onlconsts.kDOWN)
                 run_number = snapshot.get("RunNumber", -1)
-                run_type   = snapshot.get("RunType", "")
-                shift      = snapshot.get("Shift", "")
-                run_stats  = snapshot.get("RunStats", {})
-                mon_names  = snapshot.get("MonNames", [])
+                run_type = snapshot.get("RunType", "")
+                shift = snapshot.get("Shift", "")
+                run_stats = snapshot.get("RunStats", {})
+                mon_names = snapshot.get("MonNames", [])
 
                 # daq_run — always write to track state without gaps
                 run_tags = {}
@@ -156,9 +156,10 @@ def main():
                 run_fields = {"run_state": int(run_state)}
                 if run_number >= 0:
                     run_fields["run_number"] = int(run_number)
-                run_fields["subrun_number"] = int(snapshot.get("SubRunNumber", 0))
+                run_fields["subrun_number"] = int(
+                    snapshot.get("SubRunNumber", 0))
                 start_time = snapshot.get("StartTime", 0)
-                end_time   = snapshot.get("EndTime", 0)
+                end_time = snapshot.get("EndTime", 0)
                 if start_time:
                     run_fields["start_time"] = float(start_time)
                 if end_time:
@@ -171,12 +172,14 @@ def main():
                 if run_number >= 0:
                     if run_type == "physics":
                         current_daqtime = max(
-                            (run_stats.get(n, {}).get("t", 0.0) for n in mon_names),
+                            (run_stats.get(n, {}).get("t", 0.0)
+                             for n in mon_names),
                             default=0.0
                         )
                     else:
                         current_daqtime = 0.0
-                    total_daqtime = snapshot.get("DaqtimeBase", 0.0) + current_daqtime
+                    total_daqtime = snapshot.get(
+                        "DaqtimeBase", 0.0) + current_daqtime
                     rec = _line("daq_total", {}, {
                         "total_daqtime_s": total_daqtime,
                     }, ts_ns)
@@ -186,20 +189,22 @@ def main():
                 # daq_module — write for every known module
                 # when DOWN: only emit connected=0, skip stats
                 mod_connected = snapshot.get("ModuleConnected", {})
-                is_active  = run_state != onlconsts.kDOWN
-                is_running = onlutils.check_state(run_state, onlconsts.kRUNNING)
+                is_active = run_state != onlconsts.kDOWN
+                is_running = onlutils.check_state(
+                    run_state, onlconsts.kRUNNING)
                 for name in mon_names:
                     mod_fields = {
                         "connected": int(bool(mod_connected.get(name, False))),
                     }
                     if is_active:
                         s = run_stats.get(name, {})
-                        mod_fields["nevent"]     = int(s.get("n", 0))
+                        mod_fields["nevent"] = int(s.get("n", 0))
                         mod_fields["daq_time_s"] = float(s.get("t", 0.0))
                     if is_running:
                         mod_fields["acc_rate"] = float(s.get("ar", 0.0))
                         mod_fields["ins_rate"] = float(s.get("sr", 0.0))
-                    rec = _line("daq_module", {"module": name}, mod_fields, ts_ns)
+                    rec = _line("daq_module", {
+                                "module": name}, mod_fields, ts_ns)
                     if rec:
                         lines.append(rec)
 

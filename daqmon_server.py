@@ -20,7 +20,8 @@ def _setup_logging(log_file, debug=False, daemon=False):
         '[%(asctime)s] [%(levelname)s] %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
-    handlers = [RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=3)]
+    handlers = [RotatingFileHandler(
+        log_file, maxBytes=5*1024*1024, backupCount=3)]
     if not daemon:
         handlers.append(logging.StreamHandler())
 
@@ -49,7 +50,7 @@ class DAQMonitorServer:
         self.pub_socket.bind(f"tcp://*:{self.pub_port}")
 
         self._shared_data = {
-            "RunNumber":   -1,
+            "RunNumber": -1,
             "RunType":     "",
             "Shift":       "",
             "DaqtimeBase": 0.0,  # sum of daqtime for completed runs of same type
@@ -94,7 +95,8 @@ class DAQMonitorServer:
             if success:
                 log.info("TCB reachable at %s", onlconsts.kDAQSERVER_ADDR)
             else:
-                log.warning("TCB not responding at %s", onlconsts.kDAQSERVER_ADDR)
+                log.warning("TCB not responding at %s",
+                            onlconsts.kDAQSERVER_ADDR)
             return success
         except Exception as e:
             with self._hw_lock:
@@ -106,7 +108,8 @@ class DAQMonitorServer:
         """Load last run's metadata and module list from DB/config for degraded-mode publishing."""
         try:
             with self._db_write_lock:
-                conn = sqlite3.connect(onlconsts.kRUNCATALOGDBFILE, timeout=5.0)
+                conn = sqlite3.connect(
+                    onlconsts.kRUNCATALOGDBFILE, timeout=5.0)
                 try:
                     conn.row_factory = sqlite3.Row
                     cursor = conn.cursor()
@@ -117,9 +120,9 @@ class DAQMonitorServer:
                     if not record:
                         return
 
-                    runnum        = record['runnum']
-                    runtype       = record['runtype'] or ""
-                    shift         = record['shift'] or ""
+                    runnum = record['runnum']
+                    runtype = record['runtype'] or ""
+                    shift = record['shift'] or ""
                     subrun_number = record['subrun_number'] or 0
 
                     # DaqtimeBase = sum of daqtime for all completed physics runs
@@ -129,13 +132,15 @@ class DAQMonitorServer:
                         time_cols = [row[1] for row in cursor.fetchall()
                                      if row[1].startswith('t') and row[2].upper() == 'REAL']
                         if time_cols:
-                            col_expr = ", ".join(f"COALESCE({c}, 0.0)" for c in time_cols)
+                            col_expr = ", ".join(
+                                f"COALESCE({c}, 0.0)" for c in time_cols)
                             cursor.execute(f"""
                                 SELECT {col_expr} FROM runcatalog
                                 WHERE runtype = 'physics'
                                   AND etime IS NOT NULL AND etime != ''
                             """)
-                            daqtime_base = sum(max(row) for row in cursor.fetchall())
+                            daqtime_base = sum(max(row)
+                                               for row in cursor.fetchall())
                 finally:
                     conn.close()
 
@@ -152,14 +157,15 @@ class DAQMonitorServer:
                 if 'TCB' not in str(item.get('NAME', ''))
             ]
             with self._data_lock:
-                self._shared_data['RunNumber']    = runnum
-                self._shared_data['RunType']      = runtype
-                self._shared_data['Shift']        = shift
-                self._shared_data['DaqtimeBase']  = daqtime_base
+                self._shared_data['RunNumber'] = runnum
+                self._shared_data['RunType'] = runtype
+                self._shared_data['Shift'] = shift
+                self._shared_data['DaqtimeBase'] = daqtime_base
                 self._shared_data['SubRunNumber'] = subrun_number
-                self._shared_data['MonNames']     = mon_names
-                self._shared_data['RunStats']    = {
-                    name: {'n': 0, 'dn': 0, 't': 0.0, 'dt': 0.0, 'ar': 0.0, 'sr': 0.0}
+                self._shared_data['MonNames'] = mon_names
+                self._shared_data['RunStats'] = {
+                    name: {'n': 0, 'dn': 0, 't': 0.0,
+                           'dt': 0.0, 'ar': 0.0, 'sr': 0.0}
                     for name in mon_names
                 }
             log.info("Fallback: run %d (%s) loaded, daqtime_base=%.0fs, modules=%s",
@@ -202,7 +208,8 @@ class DAQMonitorServer:
                             self.monitor_thread = threading.Thread(
                                 target=self._monitor_loop, daemon=True)
                             self.monitor_thread.start()
-                            log.info("Monitor thread restarted after reconnection.")
+                            log.info(
+                                "Monitor thread restarted after reconnection.")
             else:
                 elapsed += 1
 
@@ -286,10 +293,12 @@ class DAQMonitorServer:
 
             try:
                 if tcb_sock is None:
-                    tcb_sock = onlutils.get_connection(onlconsts.kDAQSERVER_ADDR)
+                    tcb_sock = onlutils.get_connection(
+                        onlconsts.kDAQSERVER_ADDR)
 
                 # TCB → overall DAQ state
-                reply = onlutils.send_daq_cmd(tcb_sock, onlconsts.kQUERYDAQSTATUS)
+                reply = onlutils.send_daq_cmd(
+                    tcb_sock, onlconsts.kQUERYDAQSTATUS)
 
                 if reply is None:
                     if run_ending:
@@ -319,7 +328,8 @@ class DAQMonitorServer:
                         onlutils.check_state(run_state, onlconsts.kPROCENDED) or
                         onlutils.check_error(run_state)):
                     run_ending = True
-                    log.info("Run end detected (state=%s). Closing module sockets.", run_state)
+                    log.info(
+                        "Run end detected (state=%s). Closing module sockets.", run_state)
                     for mon in mon_list:
                         if mon['sock']:
                             try:
@@ -360,8 +370,8 @@ class DAQMonitorServer:
                         self._current_config_file = config_file
                         with self._data_lock:
                             self._shared_data['RunNumber'] = current_run_number
-                            self._shared_data['RunType']   = record['runtype'] or ""
-                            self._shared_data['Shift']     = record['shift'] or ""
+                            self._shared_data['RunType'] = record['runtype'] or ""
+                            self._shared_data['Shift'] = record['shift'] or ""
 
                     if current_run_number != last_run_number:
                         if last_run_number != -1:
@@ -407,7 +417,8 @@ class DAQMonitorServer:
                         last_run_number = current_run_number
 
                     # TCB → run info (start/end time, subrun number)
-                    info_reply = onlutils.send_daq_cmd(tcb_sock, onlconsts.kQUERYRUNINFO)
+                    info_reply = onlutils.send_daq_cmd(
+                        tcb_sock, onlconsts.kQUERYRUNINFO)
                     if info_reply:
                         with self._data_lock:
                             self._shared_data['SubRunNumber'] = info_reply.get(
@@ -429,7 +440,8 @@ class DAQMonitorServer:
                     fallback_loaded = True
                     try:
                         with self._db_write_lock:
-                            conn = sqlite3.connect(onlconsts.kRUNCATALOGDBFILE, timeout=5.0)
+                            conn = sqlite3.connect(
+                                onlconsts.kRUNCATALOGDBFILE, timeout=5.0)
                             try:
                                 conn.row_factory = sqlite3.Row
                                 cursor = conn.cursor()
@@ -458,15 +470,18 @@ class DAQMonitorServer:
                                         'n': 0, 'dn': 0, 't': 0.0,
                                         'dt': 0.0, 'ar': 0.0, 'sr': 0.0}
                                 with self._data_lock:
-                                    self._shared_data['MonNames'] = list(mon_names)
+                                    self._shared_data['MonNames'] = list(
+                                        mon_names)
                                     self._shared_data['RunStats'] = {
                                         k: dict(v) for k, v in run_stats.items()}
                                 log.info("Loaded module list from run %d config for DOWN-state polling.",
                                          runnum)
                             else:
-                                log.warning("Fallback config not found: %s", config_path)
+                                log.warning(
+                                    "Fallback config not found: %s", config_path)
                     except Exception as e:
-                        log.warning("Failed to load fallback module list: %s", e)
+                        log.warning(
+                            "Failed to load fallback module list: %s", e)
 
                 # Module polling — connection check in all states, stats only when active
                 if mon_list:
@@ -480,7 +495,8 @@ class DAQMonitorServer:
 
                         if mon['sock'] is None:
                             endpoint = f"tcp://{mon['ip']}:{mon['port']}"
-                            log.debug("Connecting to module %s at %s", name, endpoint)
+                            log.debug("Connecting to module %s at %s",
+                                      name, endpoint)
                             mon['sock'] = onlutils.get_connection(endpoint)
 
                             init_reply = onlutils.send_daq_cmd(
@@ -504,9 +520,11 @@ class DAQMonitorServer:
                                 connected_names.add(name)
 
                                 if is_active:
-                                    n = run_stats[name]['n'] = trg_info.get("nevent", 0)
+                                    n = run_stats[name]['n'] = trg_info.get(
+                                        "nevent", 0)
                                     t_ns = trg_info.get("trgtime", 0)
-                                    t = run_stats[name]['t'] = t_ns / 1_000_000_000.0
+                                    t = run_stats[name]['t'] = t_ns / \
+                                        1_000_000_000.0
 
                                     if t > 0:
                                         run_stats[name]['ar'] = n / t
@@ -520,24 +538,30 @@ class DAQMonitorServer:
                                     local_stats[name] = dict(run_stats[name])
 
                                     if 'AADC' in name:
-                                        set_clauses.extend(["naadc=?", "taadc=?"])
+                                        set_clauses.extend(
+                                            ["naadc=?", "taadc=?"])
                                     elif 'FADC' in name:
-                                        set_clauses.extend(["nfadc=?", "tfadc=?"])
+                                        set_clauses.extend(
+                                            ["nfadc=?", "tfadc=?"])
                                     elif 'SADC' in name:
-                                        set_clauses.extend(["nsadc=?", "tsadc=?"])
+                                        set_clauses.extend(
+                                            ["nsadc=?", "tsadc=?"])
                                     elif 'IADC' in name:
-                                        set_clauses.extend(["niadc=?", "tiadc=?"])
+                                        set_clauses.extend(
+                                            ["niadc=?", "tiadc=?"])
                                     update_params.extend([n, t])
 
                             except Exception as e:
-                                log.error("Polling module %s failed: %s", name, e)
+                                log.error(
+                                    "Polling module %s failed: %s", name, e)
                                 try:
                                     mon['sock'].close()
                                 except Exception:
                                     pass
                                 mon['sock'] = None
 
-                    module_connected = {name: (name in connected_names) for name in mon_names}
+                    module_connected = {
+                        name: (name in connected_names) for name in mon_names}
                     with self._data_lock:
                         if is_active:
                             self._shared_data['RunStats'].update(local_stats)
@@ -549,7 +573,7 @@ class DAQMonitorServer:
                             and set_clauses
                             and onlutils.check_state(run_state, onlconsts.kRUNNING)
                             and current_time - last_db_update_time
-                                >= onlconsts.kSTATSREPORTINTERVAL):
+                            >= onlconsts.kSTATSREPORTINTERVAL):
                         with self._data_lock:
                             subrun_number = self._shared_data['SubRunNumber']
                         set_clauses.append("subrun_number=?")
@@ -641,7 +665,8 @@ class DAQMonitorServer:
             return {"status": "ok"}
 
         if cmd == "NOTIFY_DAQ_STARTED":
-            log.info("DAQ boot notification received. Triggering immediate reconnect.")
+            log.info(
+                "DAQ boot notification received. Triggering immediate reconnect.")
             self._reconnect_event.set()
             return {"status": "ok"}
 
@@ -657,14 +682,15 @@ class DAQMonitorServer:
         # DB commands
         try:
             with self._db_write_lock:
-                conn = sqlite3.connect(onlconsts.kRUNCATALOGDBFILE, timeout=5.0)
+                conn = sqlite3.connect(
+                    onlconsts.kRUNCATALOGDBFILE, timeout=5.0)
                 try:
                     conn.row_factory = sqlite3.Row
                     cursor = conn.cursor()
                     result = None
 
                     if cmd == "BOOT_RUN":
-                        config  = request.get("config", "")
+                        config = request.get("config", "")
                         runtype = request.get("runtype", "")
                         cursor.execute(
                             "INSERT INTO runcatalog "
@@ -685,14 +711,16 @@ class DAQMonitorServer:
                             time_cols = [row[1] for row in cursor.fetchall()
                                          if row[1].startswith('t') and row[2].upper() == 'REAL']
                             if time_cols:
-                                col_expr = ", ".join(f"COALESCE({c}, 0.0)" for c in time_cols)
+                                col_expr = ", ".join(
+                                    f"COALESCE({c}, 0.0)" for c in time_cols)
                                 cursor.execute(f"""
                                     SELECT {col_expr} FROM runcatalog
                                     WHERE runtype = 'physics'
                                       AND etime IS NOT NULL AND etime != ''
                                       AND runnum != ?
                                 """, (run_num,))
-                                historical = sum(max(row) for row in cursor.fetchall())
+                                historical = sum(max(row)
+                                                 for row in cursor.fetchall())
                             with self._data_lock:
                                 self._shared_data['DaqtimeBase'] = historical
 
@@ -700,8 +728,9 @@ class DAQMonitorServer:
                         self._current_config_file = config
                         with self._data_lock:
                             self._shared_data['RunNumber'] = run_num
-                            self._shared_data['RunType']   = runtype
-                            self._shared_data['Shift']     = request.get("shift", "")
+                            self._shared_data['RunType'] = runtype
+                            self._shared_data['Shift'] = request.get(
+                                "shift", "")
                         log.info("BOOT_RUN: Run %d  runtype=%s  historical_daqtime=%.0fs",
                                  run_num, runtype, historical)
                         result = {"run_num": run_num}
@@ -713,8 +742,8 @@ class DAQMonitorServer:
                         result = dict(record) if record else {}
 
                     elif cmd == "TAG_GOODRUN":
-                        run_num   = request.get("run_num")
-                        onlbit    = request.get("onlbit")
+                        run_num = request.get("run_num")
+                        onlbit = request.get("onlbit")
                         stime_str = request.get("stime_str")
                         etime_str = request.get("etime_str")
                         log.info("TAG_GOODRUN: RunNum %s, goodrun=%s",
