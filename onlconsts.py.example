@@ -1,3 +1,19 @@
+#==================================================================================
+# WARNING: Changes to this file take effect differently depending on the process:
+#
+#   daqmon_server.py / rc.py  — long-running processes that import this module
+#                               once at startup and cache it. Disk changes are
+#                               IGNORED until both processes are restarted.
+#
+#   daqmon.py                 — invoked fresh by Telegraf every ~30s. It will
+#                               pick up any change on the very next poll cycle.
+#
+# Modifying onlconsts.py while daqmon_server or rc.py is running can cause
+# mismatches (e.g. port mismatch, wrong state bitmask) between processes.
+# Always restart daqmon_server and rc.py after any change.
+# Never modify this file during an active run.
+#==================================================================================
+
 #
 # DAQ Server where tcb is supposed to be running
 #
@@ -32,8 +48,8 @@ kOUTPUTSPLITTIME = 3600 # 1 hour for spliting output file
 kSTATSREPORTINTERVAL = 10 # for update runcatalog
 
 # DAQ Monitor Server (daqmon_server.py) settings
-kDAQMON_LOG_FILE         = '/tmp/cupdaq_daqmon_server.log'
-kDAQMON_PID_FILE         = '/tmp/cupdaq_daqmon_server.pid'
+kDAQMON_LOG_FILE         = '/tmp/cupdaq_server.log'
+kDAQMON_PID_FILE         = '/tmp/cupdaq_server.pid'
 kDAQMON_IDLE_TIMEOUT     = 3600  # seconds before entering degraded mode when DAQ is DOWN
 kDAQMON_RECONNECT_INTERVAL = 10  # seconds between DAQ reconnection attempts
 

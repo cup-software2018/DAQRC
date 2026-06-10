@@ -43,11 +43,17 @@ class DAQMonitorServer:
 
         self.context = zmq.Context()
 
-        self.cmd_socket = self.context.socket(zmq.REP)
-        self.cmd_socket.bind(f"tcp://*:{self.cmd_port}")
+        try:
+            self.cmd_socket = self.context.socket(zmq.REP)
+            self.cmd_socket.bind(f"tcp://*:{self.cmd_port}")
 
-        self.pub_socket = self.context.socket(zmq.PUB)
-        self.pub_socket.bind(f"tcp://*:{self.pub_port}")
+            self.pub_socket = self.context.socket(zmq.PUB)
+            self.pub_socket.bind(f"tcp://*:{self.pub_port}")
+        except zmq.ZMQError as e:
+            self.context.term()
+            print(f"Failed to bind ports {self.cmd_port}/{self.pub_port}: {e}. "
+                  f"Is another instance already running?")
+            sys.exit(1)
 
         self._shared_data = {
             "RunNumber": -1,
