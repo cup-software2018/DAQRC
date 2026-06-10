@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import copy
 import shutil
 import subprocess
 import yaml
@@ -315,8 +316,10 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
             config_data = main_config
 
+            config_out = {k: v for k, v in main_config.items()
+                          if not k.startswith('.')}
             with open(merged_local_config, 'w', encoding='utf-8') as out_fp:
-                yaml.dump(main_config, out_fp,
+                yaml.dump(copy.deepcopy(config_out), out_fp,
                           default_flow_style=None, sort_keys=False)
 
             if getattr(onlconsts, 'kISREMOTEDAQ', True):
