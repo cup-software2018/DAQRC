@@ -711,6 +711,7 @@ class DAQMonitorServer:
 
                         # Sum daqtime of completed physics runs (excl. current)
                         # Only recalculate for physics runs; keep existing value for others
+                        historical = None
                         if runtype == "physics":
                             historical = 0.0
                             cursor.execute("PRAGMA table_info(runcatalog)")
@@ -737,8 +738,9 @@ class DAQMonitorServer:
                             self._shared_data['RunType'] = runtype
                             self._shared_data['Shift'] = request.get(
                                 "shift", "")
-                        log.info("BOOT_RUN: Run %d  runtype=%s  historical_daqtime=%.0fs",
-                                 run_num, runtype, historical)
+                        log.info("BOOT_RUN: Run %d  runtype=%s  historical_daqtime=%s",
+                                 run_num, runtype,
+                                 f"{historical:.0f}s" if historical is not None else "n/a")
                         result = {"run_num": run_num}
 
                     elif cmd == "SYNC_LATEST":
